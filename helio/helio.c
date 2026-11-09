@@ -15,11 +15,13 @@
  *   ALGORITHM                      selected drone's waveform (sine .. saw)
  *   PRESETS                        selected drone's volume
  *   KNOB1..4                       tune oscillator 1..4 (5 cents a click; SEL held: 1 semitone)
- *   EDIT held + KNOB1..4           level of oscillator 1..4
- *   FX held   + KNOB1..4           reverb: decay (0.5..60 s), size, tone, mix
- *   GLO held  + KNOB1..4           filter A cutoff, A resonance, B cutoff, B resonance
- *   LFO held  + KNOB1..4           LFO rate, LFO depth, drift amount, filter drive
- *   ENV held  + KNOB1..2           selected drone's swell (attack) and fade (release) time
+ *   Pages: press a page button to open it (its light comes on), press it again to go back.
+ *   EDIT  page: KNOB1..4           level of oscillator 1..4
+ *   FX    page: KNOB1..4           reverb: decay (0.5..60 s), size, tone, mix
+ *   GLO   page: KNOB1..4           filter A cutoff, A resonance, B cutoff, B resonance
+ *   LFO   page: KNOB1..4           LFO rate, LFO depth, drift amount, filter drive
+ *   ENV   page: KNOB1..2           selected drone's swell (attack) and fade (release) time
+ *   Every page shows its values as bars.
  *   PLAY                           all drones off / back on
  *   SAVE                           keep the sound (it is loaded at the next start)
  * MIDI: notes 48..53 (C3..F3) toggle drones 1..6; CC 123 all off.
@@ -51,6 +53,22 @@ static float exp2f_(float x)                    /* 2^x, ~1e-6 relative, for |x| 
     p = 1.0f + a * (1.0f + a * (0.5f + a * (0.16666667f + a * (0.041666668f + a * (0.0083333338f + a * 0.0013888889f)))));
     s.u = (uint32_t)(n + 127) << 23;
     return p * s.f;
+}
+
+static float log2f_(float x)                    /* log2(x), x > 0, ~1e-5 */
+{
+    fu_t u;
+    int32_t e;
+    float m, z, q;
+    if (x < 1e-30f) x = 1e-30f;
+    u.f = x;
+    e = (int32_t)(u.u >> 23) - 127;
+    u.u = (u.u & 0x7FFFFFu) | 0x3F800000u;
+    m = u.f;
+    if (m > 1.41421356f) { m *= 0.5f; e++; }
+    z = (m - 1.0f) / (m + 1.0f);
+    q = z * z;
+    return (float)e + 2.8853901f * z * (1.0f + q * (0.33333333f + q * (0.2f + q * (0.14285714f + q * 0.11111111f))));
 }
 
 static float sin_q(float a)                     /* sin(a) for 0 <= a <= pi/2 */
@@ -445,7 +463,8 @@ static void load_sound(void)
 /* ------------------------------------------------------------------ the panel (main loop) */
 
 static const uint8_t DRONE_KEY[ND] = {0, 2, 4, 6, 7, 9};   /* F3 G3 A3 B3 C4 D4 */
-static uint32_t sel, held, dirty = 1, saved_mask, msg_until;
+static uint32_t sel, held, page, dirty = 1, saved_mask, msg_until;   /* page: 0 or the button of the open page */
+#define PAGE_BTNS ((1u << HB_BTN_EDIT) | (1u << HB_BTN_FX) | (1u << HB_BTN_GLO) | (1u << HB_BTN_LFO) | (1u << HB_BTN_ENV))
 static const char *msg = "";
 
 static void leds(void)
@@ -453,6 +472,8 @@ static void leds(void)
     uint32_t d;
     for (d = 0; d < ND; d++)
         H->led(HB_LED_KEY(DRONE_KEY[d]), dr[d].gate ? 1u : (d == sel ? 2u : 0u));
+    for (d = 0; d < 14u; d++)
+        if (PAGE_BTNS & (1u << d)) H->led(d, page == d ? 1u : 2u);   /* open page lit, the others glow */
 }
 
 static void toggle(uint32_t d)
@@ -470,23 +491,23 @@ static void knob(uint32_t k, int32_t c)          /* k 0..3, c clicks */
 {
     drone_t *v = &dr[sel];
     float f = (float)c;
-    if (held & (1u << HB_BTN_EDIT)) {
+    if (page == HB_BTN_EDIT) {
         v->o[k].level = clampf(v->o[k].level + f * 0.02f, 0.0f, 1.0f);
-    } else if (held & (1u << HB_BTN_FX)) {                  /* the reverb */
+    } else if (page == HB_BTN_FX) {                         /* the reverb */
         if (k == 0) rv_decay = clampf(rv_decay * exp2f_(f * 0.125f), 0.5f, 60.0f);   /* 8 clicks: x2 */
         else if (k == 1) rv_size = clampf(rv_size + f * 0.02f, 0.5f, 1.0f);
         else if (k == 2) rv_tone = clampf(rv_tone + f * 0.02f, 0.0f, 1.0f);
         else rv_mix = clampf(rv_mix + f * 0.02f, 0.0f, 1.0f);
-    } else if (held & (1u << HB_BTN_GLO)) {                 /* the filters */
+    } else if (page == HB_BTN_GLO) {                        /* the filters */
         filt_t *x = &fl[k >> 1];
         if (k & 1u) x->res = clampf(x->res + f * 0.01f, 0.0f, 1.0f);
         else x->cutoff = clampf(x->cutoff * exp2f_(f * (1.0f / 24.0f)), 30.0f, 16000.0f);   /* quarter tones */
-    } else if (held & (1u << HB_BTN_LFO)) {
+    } else if (page == HB_BTN_LFO) {
         if (k == 0) lfo_rate = clampf(lfo_rate + f * 0.01f, 0.0f, 2.0f);
         else if (k == 1) lfo_depth = clampf(lfo_depth + f * 0.1f, 0.0f, 4.0f);
         else if (k == 2) drift_amt = clampf(drift_amt + f * 0.01f, 0.0f, 1.0f);
         else drive = clampf(drive + f * 0.1f, 0.5f, 8.0f);
-    } else if (held & (1u << HB_BTN_ENV)) {
+    } else if (page == HB_BTN_ENV) {
         if (k == 0) v->att_s = clampf(v->att_s + f * 0.1f, 0.1f, 25.0f);
         else if (k == 1) v->rel_s = clampf(v->rel_s + f * 0.1f, 0.1f, 25.0f);
     } else {
@@ -520,7 +541,11 @@ static void ui(uint32_t ev, int32_t arg)
             else { for (d = 0; d < ND; d++) dr[d].gate = (int32_t)((saved_mask >> d) & 1u); say("BACK ON"); }
             leds();
         } else if (id == HB_BTN_SAVE) { save_sound(); say("SAVED"); }
-        else dirty = 1;                                     /* a held mode: show its labels */
+        else if (id < 14u && (PAGE_BTNS & (1u << id))) {   /* open the page, or close it again */
+            page = page == id ? 0u : id;
+            leds();
+            dirty = 1;
+        } else dirty = 1;
         break;
     case HB_EV_BTN_UP:
         if (id < 32u) held &= ~(1u << id);
@@ -581,6 +606,22 @@ static char *put_cents(char *p, float semis)     /* +7.02 st -> "+7.02" */
     return p;
 }
 
+static char *put_fix(char *p, float v, uint32_t dec)   /* v with dec decimals (0..2) */
+{
+    uint32_t sc = dec == 2u ? 100u : dec == 1u ? 10u : 1u, a;
+    int32_t r = roundi(v * (float)sc);
+    if (r < 0) { *p++ = '-'; r = -r; }
+    a = (uint32_t)r;
+    p = put_u(p, a / sc);
+    if (dec) {
+        *p++ = '.';
+        if (dec == 2u) *p++ = (char)('0' + a / 10u % 10u);
+        *p++ = (char)('0' + a % 10u);
+        *p = 0;
+    }
+    return p;
+}
+
 #define C_DIM HB_RGB(70, 70, 80)
 #define C_SUN HB_RGB(255, 170, 40)
 #define C_TXT HB_RGB(220, 220, 220)
@@ -624,40 +665,52 @@ static void draw(uint32_t full)
     H->cv_text(6, 72, 0, b, C_TXT);
     H->cv_blit(0, 24);
 
-    /* the four oscillators, or the held page: y 120..216 */
+    /* the four oscillators, or the open page, each value with a bar: y 120..216 */
     H->cv_begin(240, 96, 0);
-    if (held & ((1u << HB_BTN_FX) | (1u << HB_BTN_GLO) | (1u << HB_BTN_LFO) | (1u << HB_BTN_ENV))) {
+    if (page && page != HB_BTN_EDIT) {
         const char *L[4];
-        int32_t V[4];
-        uint32_t n = 4;
-        if (held & (1u << HB_BTN_FX)) {
-            L[0] = "DECAY .1S"; V[0] = roundi(rv_decay * 10.0f); L[1] = "SIZE %"; V[1] = roundi(rv_size * 100.0f);
-            L[2] = "TONE %"; V[2] = roundi(rv_tone * 100.0f); L[3] = "MIX %"; V[3] = roundi(rv_mix * 100.0f);
-        } else if (held & (1u << HB_BTN_GLO)) {
-            L[0] = "A CUT HZ"; V[0] = roundi(fl[0].cutoff); L[1] = "A RES %"; V[1] = roundi(fl[0].res * 100.0f);
-            L[2] = "B CUT HZ"; V[2] = roundi(fl[1].cutoff); L[3] = "B RES %"; V[3] = roundi(fl[1].res * 100.0f);
-        } else if (held & (1u << HB_BTN_LFO)) {
-            L[0] = "LFO .01HZ"; V[0] = roundi(lfo_rate * 100.0f); L[1] = "DEPTH .1OCT"; V[1] = roundi(lfo_depth * 10.0f);
-            L[2] = "DRIFT CENT"; V[2] = roundi(drift_amt * 100.0f); L[3] = "DRIVE x.1"; V[3] = roundi(drive * 10.0f);
+        float V[4], N[4];                                   /* value shown, bar 0..1 */
+        uint32_t D[4], n = 4;                               /* decimals */
+        const char *U[4];
+        if (page == HB_BTN_FX) {
+            L[0] = "DECAY"; V[0] = rv_decay; D[0] = 1; U[0] = " S"; N[0] = log2f_(rv_decay * 2.0f) / 6.9069f;   /* 0.5..60 s */
+            L[1] = "SIZE"; V[1] = rv_size * 100.0f; D[1] = 0; U[1] = " %"; N[1] = (rv_size - 0.5f) * 2.0f;
+            L[2] = "TONE"; V[2] = rv_tone * 100.0f; D[2] = 0; U[2] = " %"; N[2] = rv_tone;
+            L[3] = "MIX"; V[3] = rv_mix * 100.0f; D[3] = 0; U[3] = " %"; N[3] = rv_mix;
+        } else if (page == HB_BTN_GLO) {
+            L[0] = "CUT A"; V[0] = fl[0].cutoff; D[0] = 0; U[0] = " HZ"; N[0] = log2f_(fl[0].cutoff * (1.0f / 30.0f)) / 9.0589f;
+            L[1] = "RES A"; V[1] = fl[0].res * 100.0f; D[1] = 0; U[1] = " %"; N[1] = fl[0].res;
+            L[2] = "CUT B"; V[2] = fl[1].cutoff; D[2] = 0; U[2] = " HZ"; N[2] = log2f_(fl[1].cutoff * (1.0f / 30.0f)) / 9.0589f;
+            L[3] = "RES B"; V[3] = fl[1].res * 100.0f; D[3] = 0; U[3] = " %"; N[3] = fl[1].res;
+        } else if (page == HB_BTN_LFO) {
+            L[0] = "RATE"; V[0] = lfo_rate; D[0] = 2; U[0] = " HZ"; N[0] = lfo_rate * 0.5f;
+            L[1] = "DEPTH"; V[1] = lfo_depth; D[1] = 1; U[1] = " OCT"; N[1] = lfo_depth * 0.25f;
+            L[2] = "DRIFT"; V[2] = drift_amt * 100.0f; D[2] = 0; U[2] = " CT"; N[2] = drift_amt;
+            L[3] = "DRIVE"; V[3] = drive; D[3] = 1; U[3] = ""; N[3] = (drive - 0.5f) * (1.0f / 7.5f);
         } else {
-            L[0] = "SWELL .1S"; V[0] = roundi(v->att_s * 10.0f); L[1] = "FADE .1S"; V[1] = roundi(v->rel_s * 10.0f);
+            L[0] = "SWELL"; V[0] = v->att_s; D[0] = 1; U[0] = " S"; N[0] = log2f_(v->att_s * 10.0f) / 7.9658f;   /* 0.1..25 s */
+            L[1] = "FADE"; V[1] = v->rel_s; D[1] = 1; U[1] = " S"; N[1] = log2f_(v->rel_s * 10.0f) / 7.9658f;
             n = 2;
         }
         for (o = 0; o < n; o++) {
-            H->cv_text(6, 4 + (int32_t)o * 22, 0, L[o], C_HINT);
-            put_u(b, (uint32_t)V[o]);
-            H->cv_text(150, 4 + (int32_t)o * 22, 0, b, C_TXT);
+            int32_t y = 4 + (int32_t)o * 22, w = roundi(clampf(N[o], 0.0f, 1.0f) * 82.0f);
+            H->cv_text(6, y, 0, L[o], C_HINT);
+            p = put_fix(b, V[o], D[o]);
+            put_s(p, U[o]);
+            H->cv_text(64, y, 0, b, C_TXT);
+            H->cv_rect(150, y + 4, 84, 10, C_DIM);
+            if (w > 0) H->cv_rect(151, y + 5, w, 8, C_SUN);
         }
     } else {
         for (o = 0; o < NO; o++) {
-            int32_t y = 4 + (int32_t)o * 22, w = roundi(v->o[o].level * 70.0f);
+            int32_t y = 4 + (int32_t)o * 22, w = roundi(v->o[o].level * 82.0f);
             p = put_s(b, "K");
             p = put_u(p, o + 1u);
             p = put_s(p, " ");
             put_cents(p, v->o[o].tune);
             H->cv_text(6, y, 0, b, C_TXT);
-            H->cv_rect(160, y + 4, 72, 10, C_DIM);
-            if (w > 0) H->cv_rect(161, y + 5, w, 8, (held & (1u << HB_BTN_EDIT)) ? C_HINT : C_SUN);
+            H->cv_rect(150, y + 4, 84, 10, C_DIM);
+            if (w > 0) H->cv_rect(151, y + 5, w, 8, page == HB_BTN_EDIT ? C_HINT : C_SUN);
         }
     }
     H->cv_blit(0, 120);
@@ -665,7 +718,11 @@ static void draw(uint32_t full)
     /* the hint line: y 216..240 */
     p = b;
     if (*msg) p = put_s(p, msg);
-    else if (held & (1u << HB_BTN_EDIT)) p = put_s(p, "EDIT: KNOBS = LEVELS");
+    else if (page == HB_BTN_EDIT) p = put_s(p, "LEVELS   EDIT = BACK");
+    else if (page == HB_BTN_FX) p = put_s(p, "REVERB   FX = BACK");
+    else if (page == HB_BTN_GLO) p = put_s(p, "FILTERS   GLO = BACK");
+    else if (page == HB_BTN_LFO) p = put_s(p, "LFO + DRIFT   LFO = BACK");
+    else if (page == HB_BTN_ENV) p = put_s(p, "SWELL + FADE   ENV = BACK");
     else if (held & (1u << HB_BTN_SEL)) p = put_s(p, "SEL: KNOBS = SEMITONES");
     else { p = put_s(p, "CPU "); p = put_u(p, load_pct); p = put_s(p, "%"); }
     H->text(0, 218, 240, 0, b, *msg ? C_SUN : C_DIM, 1);
@@ -687,7 +744,7 @@ static int init(const hb_host_t *h)
     }
     fl[0].ic1 = fl[0].ic2 = fl[1].ic1 = fl[1].ic2 = 0.0f;
     rv_init();
-    sel = 0; held = 0; dirty = 1;
+    sel = 0; held = 0; page = 0; dirty = 1;
     leds();
     H->log("helio: ready");
     return 0;
@@ -698,6 +755,7 @@ static void release(void)
     uint32_t d;
     for (d = 0; d < ND; d++) { dr[d].gate = 0; dr[d].env = 0.0f; }
     held = 0;
+    page = 0;
 }
 
 HB_DESC = {HB_ABI, "HELIO", init, release, note, cc, render, ui, draw, 0, 0, HB_F_PANEL, 0, 0};
