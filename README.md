@@ -21,14 +21,17 @@ A module for [fm1-dock](https://github.com/joakimeriksson/fm1-dock), inspired by
 | **ALGORITHM** knob | selected drone's waveform, sine → saw |
 | **PRESETS** knob | selected drone's volume |
 | **KNOB 1–4** | tune oscillator 1–4, 5 cents per click (hold **SEL**: 1 semitone) |
-| hold **EDIT** + KNOB 1–4 | level of oscillator 1–4 |
-| hold **FX** + KNOB 1–4 | reverb: decay (0.5–60 s), size, tone (dark → bright), mix |
-| hold **GLO** + KNOB 1–4 | filter A cutoff, A resonance, B cutoff, B resonance |
-| hold **LFO** + KNOB 1–4 | LFO speed, LFO depth, drift amount, filter drive |
-| hold **ENV** + KNOB 1–2 | selected drone's swell time, fade time |
+| **EDIT** page: KNOB 1–4 | level of oscillator 1–4 |
+| **FX** page: KNOB 1–4 | reverb: decay (0.5–60 s), size, tone (dark → bright), mix |
+| **GLO** page: KNOB 1–4 | filter A cutoff, A resonance, B cutoff, B resonance |
+| **LFO** page: KNOB 1–4 | LFO speed, LFO depth, drift amount, filter drive |
+| **ENV** page: KNOB 1–2 | selected drone's swell time, fade time |
 | **PLAY** | all drones off / back on |
 | **SAVE** | keep the sound |
 | hold **HOME** 1.5 s | back to fm1-dock's module list |
+
+Pages: press EDIT, FX, GLO, LFO or ENV once to open the page (its button lights up), press it again to go
+back to the oscillators. Every value is shown as a number and a bar.
 
 MIDI: notes C3–F3 (48–53) switch drones 1–6, CC 123 turns all off.
 The bottom line of the screen shows how much of the chip's time the sound uses (CPU %).
