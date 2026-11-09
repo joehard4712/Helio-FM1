@@ -2,6 +2,96 @@
 # Every push (or Actions -> build -> Run workflow) makes an artifact "helio" with:
 #   helio.dock       drop it on fm1-dock's console page to put it on the FM-1
 #   helio_test.wav   a scripted test performance, rendered from the same code
+#   helio-emulator.fm1save   fm1-dock 0.8 with HELIO installed, for fm1-emu's "Import..." (also kept in emulator/)
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write                 # to keep emulator/helio-emulator.fm1save in the repository
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: This repository
+        uses: actions/checkout@v4
+
+      - name: fm1-dock (the module tools and headers)
+        uses: actions/checkout@v4
+        with:
+          repository: joakimeriksson/fm1-dock
+          path: dock
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python packages
+        run: python3 -m pip install Pillow
+
+      - name: JieLi Linux toolchain (the FM-1's compiler)
+        run: |
+          mkdir -p ~/.jieli
+          curl -fL --retry 3 https://pkgman.jieliapp.com/s/linux-toolchain | tar -xJ -C ~/.jieli
+          TC="$(ls -d ~/.jieli/jieli-linux-toolchains-* | sort | tail -1)"
+          ln -sfn "$(basename "$TC")" ~/.jieli/toolchain
+          echo "JIELI_TOOLCHAIN=$HOME/.jieli/toolchain" >> "$GITHUB_ENV"
+
+      - name: Build helio.dock
+        run: |
+          rm -rf dock/modules/helio
+          cp -r helio dock/modules/helio
+          cd dock
+          python3 tools/hbmod.py modules/helio
+          python3 tools/hbmod.py --info build/modules/helio.dock
+          cp build/modules/helio.dock "$GITHUB_WORKSPACE/"
+
+      - name: Test on the computer (render helio_test.wav)
+        run: |
+          cc -O2 -Wall -Idock/firmware/dock -Ihelio -o host_sim test/host_sim.c -lm
+          ./host_sim
+
+      - name: Emulator save (fm1-dock 0.8 with HELIO installed in its flash)
+        run: |
+          curl -fL --retry 3 -o fm1-dock.fwsc https://github.com/joakimeriksson/fm1-dock/releases/download/v0.8/fm1-dock-0.8.fwsc
+          python3 - <<'EOF'
+          import base64, hashlib, json, sys
+          sys.path.insert(0, "dock/tools")
+          import tryit
+          sectors = tryit.sectors_for(open("helio.dock", "rb").read())
+          pkg = open("fm1-dock.fwsc", "rb").read()
+          save = {"format": "fm1-emulator-save", "version": 1, "hash": hashlib.sha256(pkg).hexdigest(),
+                  "name": "fm1-dock 0.8 + HELIO", "package": base64.b64encode(pkg).decode(),
+                  "sectors": [{"at": at, "data": base64.b64encode(d).decode()} for at, d in sorted(sectors.items())]}
+          open("helio-emulator.fm1save", "w").write(json.dumps(save))
+          print("emulator save:", [hex(a) for a in sorted(sectors)])
+          EOF
+
+      - name: Keep the emulator save in the repository
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p emulator
+          cp helio-emulator.fm1save emulator/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add emulator/helio-emulator.fm1save
+          git diff --cached --quiet || { git commit -m "Emulator save for this build" && git push; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helio
+          path: |
+            helio.dock
+            helio_test.wav
+            helio-emulator.fm1save
+          if-no-files-found: error
+# Builds the HELIO module for fm1-dock on GitHub's servers, so nothing needs installing on your computer.
+# Every push (or Actions -> build -> Run workflow) makes an artifact "helio" with:
+#   helio.dock       drop it on fm1-dock's console page to put it on the FM-1
+#   helio_test.wav   a scripted test performance, rendered from the same code
 name: build
 
 on:
