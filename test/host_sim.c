@@ -43,7 +43,7 @@ static hb_host_t host = {
 };
 
 #define BLOCK 256
-#define SECS 45
+#define SECS 60
 static void key(uint32_t k) { hb_module.ui(HB_EV_KEY_DOWN | k, 0); hb_module.ui(HB_EV_KEY_UP | k, 0); }
 static void btn(uint32_t b, int down) { hb_module.ui((down ? HB_EV_BTN_DOWN : HB_EV_BTN_UP) | b, 0); }
 static void enc(uint32_t e, int32_t c) { hb_module.ui(HB_EV_ENC | e, c); }
@@ -79,9 +79,10 @@ int main(void)
         now_ms = (uint32_t)(t * 1000.0f);
 #define AT(s) (blk == (uint32_t)((s) * 44100.0f / BLOCK))
         if (AT(0.0f)) key(0);                       /* drone 1 on (F3) */
+        if (AT(0.5f)) { btn(HB_BTN_FX, 1); enc(HB_ENC_KNOB1, 8); enc(HB_ENC_KNOB4, 10); btn(HB_BTN_FX, 0); }  /* reverb 24 s, mix 55 % */
         if (AT(5.0f)) key(6);                       /* drone 4 on (B3) */
         if (AT(9.0f)) key(2);                       /* drone 2 on (G3) */
-        if (AT(12.0f)) { btn(HB_BTN_FX, 1); enc(HB_ENC_KNOB1, 20); enc(HB_ENC_KNOB2, 25); btn(HB_BTN_FX, 0); }
+        if (AT(12.0f)) { btn(HB_BTN_GLO, 1); enc(HB_ENC_KNOB1, 20); enc(HB_ENC_KNOB2, 25); btn(HB_BTN_GLO, 0); }
         if (t >= 16.0f && t < 24.0f && blk % 20 == 0) enc(HB_ENC_KNOB4, 1);   /* slide osc 4 of drone 2 */
         if (AT(25.0f)) enc(HB_ENC_ALGORITHM, 6);    /* drone 2 brighter */
         if (AT(27.0f)) key(7);                      /* drone 5 on (C4) */
@@ -116,5 +117,40 @@ int main(void)
     printf("peak %.2f, rms %.3f, clipped samples %u, NaN %u, worst block %.0f us on this computer\n",
            peak / 32768.0, sqrt(sum2 / (2.0 * total)) / 32768.0, clips, nans, (double)worst * 1e6 / CLOCKS_PER_SEC);
     printf("text calls %d, blits %d\n", text_calls, blit_calls);
+
+    /* stress: the longest, biggest reverb at full mix, all six drones, 120 s; then 60 s of tail */
+    {
+        uint32_t d2, b2, nan2 = 0;
+        double worst_us = 0, rms_on = 0, rms_tail_early = 0, rms_tail_late = 0;
+        int32_t pk = 0;
+        hb_module.init(&host);
+        btn(HB_BTN_FX, 1);
+        enc(HB_ENC_KNOB1, 100); enc(HB_ENC_KNOB2, 50); enc(HB_ENC_KNOB4, 100);
+        btn(HB_BTN_FX, 0);
+        printf("stress: decay %.1f s, size %.2f, mix %.2f\n", rv_decay, rv_size, rv_mix);
+        for (d2 = 0; d2 < ND; d2++) hb_module.ui(HB_EV_KEY_DOWN | DRONE_KEY[d2], 0);
+        for (b2 = 0; b2 < (uint32_t)(180.0 * 44100 / BLOCK); b2++) {
+            double t2 = b2 * (double)BLOCK / 44100.0, e = 0;
+            clock_t c1;
+            uint32_t i;
+            if (b2 == (uint32_t)(120.0 * 44100 / BLOCK)) { btn(HB_BTN_PLAY, 1); btn(HB_BTN_PLAY, 0); }
+            memset(out, 0, sizeof out);
+            c1 = clock();
+            hb_module.render(out, BLOCK);
+            if ((double)(clock() - c1) * 1e6 / CLOCKS_PER_SEC > worst_us) worst_us = (double)(clock() - c1) * 1e6 / CLOCKS_PER_SEC;
+            for (i = 0; i < 2 * BLOCK; i++) {
+                int32_t a = out[i] < 0 ? -out[i] : out[i];
+                if (a > pk) pk = a;
+                e += (double)out[i] * out[i];
+            }
+            e = sqrt(e / (2.0 * BLOCK)) / 32768.0;
+            if (t2 > 100 && t2 < 120) rms_on = rms_on > e ? rms_on : e;
+            if (t2 > 135 && t2 < 136) rms_tail_early = e;
+            if (t2 > 179) rms_tail_late = e;
+            for (i = 0; i < 8; i++) if (rv_lp[i] != rv_lp[i]) nan2++;
+        }
+        printf("stress: peak %.2f, rms while playing %.3f, tail 15 s after off %.4f, 59 s after off %.5f, NaN %u, "
+               "worst block %.0f us on this computer\n", pk / 32768.0, rms_on, rms_tail_early, rms_tail_late, nan2, worst_us);
+    }
     return 0;
 }
