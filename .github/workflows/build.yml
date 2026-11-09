@@ -1,0 +1,62 @@
+# Builds the HELIO module for fm1-dock on GitHub's servers, so nothing needs installing on your computer.
+# Every push (or Actions -> build -> Run workflow) makes an artifact "helio" with:
+#   helio.dock       drop it on fm1-dock's console page to put it on the FM-1
+#   helio_test.wav   a scripted test performance, rendered from the same code
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: This repository
+        uses: actions/checkout@v4
+
+      - name: fm1-dock (the module tools and headers)
+        uses: actions/checkout@v4
+        with:
+          repository: joakimeriksson/fm1-dock
+          path: dock
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python packages
+        run: python3 -m pip install Pillow
+
+      - name: JieLi Linux toolchain (the FM-1's compiler)
+        run: |
+          mkdir -p ~/.jieli
+          curl -fL --retry 3 https://pkgman.jieliapp.com/s/linux-toolchain | tar -xJ -C ~/.jieli
+          TC="$(ls -d ~/.jieli/jieli-linux-toolchains-* | sort | tail -1)"
+          ln -sfn "$(basename "$TC")" ~/.jieli/toolchain
+          echo "JIELI_TOOLCHAIN=$HOME/.jieli/toolchain" >> "$GITHUB_ENV"
+
+      - name: Build helio.dock
+        run: |
+          rm -rf dock/modules/helio
+          cp -r helio dock/modules/helio
+          cd dock
+          python3 tools/hbmod.py modules/helio
+          python3 tools/hbmod.py --info build/modules/helio.dock
+          cp build/modules/helio.dock "$GITHUB_WORKSPACE/"
+
+      - name: Test on the computer (render helio_test.wav)
+        run: |
+          cc -O2 -Wall -Idock/firmware/dock -Ihelio -o host_sim test/host_sim.c -lm
+          ./host_sim
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helio
+          path: |
+            helio.dock
+            helio_test.wav
+          if-no-files-found: error
