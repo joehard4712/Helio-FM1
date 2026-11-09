@@ -19,7 +19,9 @@
  *   EDIT  page: KNOB1..4           level of oscillator 1..4
  *   FX    page: KNOB1..4           reverb: decay (0.5..60 s), size, tone, mix
  *   GLO   page: KNOB1..4           filter A cutoff, A resonance, B cutoff, B resonance
- *   LFO   page: KNOB1..4           LFO rate, LFO depth, drift amount, filter drive
+ *   LFO   page: KNOB1..4           1st tap: LFO speed of oscillator 1..4 (its level breathes)
+ *                                  2nd tap: depth of those LFOs; 3rd tap: filter LFO rate, depth,
+ *                                  drift amount, filter drive; 4th tap: back
  *   ENV   page: KNOB1..2           selected drone's swell (attack) and fade (release) time
  *   Every page shows its values as bars.
  *   PLAY                           all drones off / back on
@@ -113,7 +115,10 @@ static float rand01(void)
 typedef struct {
     volatile float tune;            /* semitones from the drone's root */
     volatile float level;           /* 0..1 */
+    volatile float lrate;           /* its own LFO: Hz (0.01..5) */
+    volatile float ldepth;          /* 0..1: how deep it pulls the level down */
     float drift, drift_target;      /* audio side only */
+    float lph, lgain;               /* audio side: LFO phase 0..1, the gain it gave last block */
     uint32_t ph;
 } osc_t;
 
@@ -300,7 +305,7 @@ static void render(int32_t *out, uint32_t n)
         float env = v->env, w = v->wave, g = v->vol * 0.25f;
         float *b = bus[d < 3u ? 0 : 1];
         uint32_t inc[NO];
-        float lev[NO], dts[NO], idt[NO];
+        float lev[NO], dlev[NO], dts[NO], idt[NO];
         if (env <= 0.0f && !v->gate) continue;              /* silent: costs nothing */
 
         for (o = 0; o < NO; o++) {                          /* pitch once a block */
@@ -311,7 +316,16 @@ static void render(int32_t *out, uint32_t n)
             hz = 440.0f * exp2f_((v->root + s->tune + s->drift - 69.0f) * (1.0f / 12.0f));
             hz = clampf(hz, 1.0f, 8000.0f);
             inc[o] = (uint32_t)(int32_t)(hz * (4294967296.0f / SR));
-            lev[o] = s->level;
+            {                                               /* the oscillator's LFO: level, ramped over the block */
+                float ph2 = s->lph + s->lrate * (float)n / SR, gnew;
+                if (ph2 >= 1.0f) ph2 -= (float)(int32_t)ph2;
+                s->lph = ph2;
+                gnew = 1.0f - clampf(s->ldepth, 0.0f, 1.0f) *
+                       (0.5f + 0.5f * sine_ph((uint32_t)(int32_t)(ph2 * 4294967296.0f - 2147483648.0f) + 0x80000000u));
+                lev[o] = s->level * s->lgain;
+                dlev[o] = (s->level * gnew - lev[o]) / (float)n;
+                s->lgain = gnew;
+            }
             dts[o] = (float)(int32_t)(inc[o] >> 8) * (1.0f / 16777216.0f);
             idt[o] = 1.0f / dts[o];
         }
@@ -327,6 +341,7 @@ static void render(int32_t *out, uint32_t n)
                 if (t < dt) { float u = t * idt[o]; saw -= u + u - u * u - 1.0f; }             /* polyBLEP */
                 else if (t > 1.0f - dt) { float u = (t - 1.0f) * idt[o]; saw -= u * u + u + u + 1.0f; }
                 x += lev[o] * (si + w * (saw - si));
+                lev[o] += dlev[o];
                 v->o[o].ph = ph + inc[o];
             }
             b[i] += x * g * env;
@@ -367,8 +382,12 @@ typedef struct {
     uint8_t res[2];                 /* % */
     uint8_t lfo_rate, lfo_depth, drift, drv;   /* 0.01 Hz, 0.1 oct, cent, 0.1 */
     uint8_t rv_dec, rv_siz, rv_ton, rv_mx;      /* reverb (v2): 0.25 s, %, %, % */
+    uint16_t lrate[ND][NO];         /* oscillator LFOs (v3): 0.001 Hz */
+    uint8_t ldepth[ND][NO];         /* % */
 } saved_t;
-#define MAGIC 0x48454C32u           /* "HEL2" */
+#define MAGIC 0x48454C33u           /* "HEL3" */
+#define MAGIC_V2 0x48454C32u        /* "HEL2": before the oscillator LFOs */
+#define SAVED_V2 ((uint32_t)__builtin_offsetof(saved_t, lrate))
 #define MAGIC_V1 0x48454C31u        /* "HEL1": a sound saved before the reverb, without its last 4 bytes */
 #define SAVED_V1 ((uint32_t)__builtin_offsetof(saved_t, rv_dec))
 
@@ -376,6 +395,7 @@ static void defaults(void)
 {
     static const uint8_t ROOT[ND] = {36, 43, 48, 31, 55, 60};
     static const float TUNE[NO] = {0.0f, 0.07f, 7.02f, 11.9f};
+    static const float LRATE[NO] = {0.05f, 0.07f, 0.11f, 0.13f};
     uint32_t d, o;
     for (d = 0; d < ND; d++) {
         dr[d].root = ROOT[d];
@@ -386,6 +406,8 @@ static void defaults(void)
         for (o = 0; o < NO; o++) {
             dr[d].o[o].tune = TUNE[o] + (rand01() - 0.5f) * 0.1f;
             dr[d].o[o].level = o ? 0.6f : 0.9f;
+            dr[d].o[o].lrate = LRATE[o] * (1.0f + 0.1f * (float)d);   /* all a little different */
+            dr[d].o[o].ldepth = 0.0f;                               /* off until turned up */
         }
     }
     fl[0].cutoff = 700.0f; fl[1].cutoff = 1200.0f;
@@ -405,6 +427,8 @@ static void save_sound(void)
         for (o = 0; o < NO; o++) {
             s.cents[d][o] = (int16_t)roundi(dr[d].o[o].tune * 100.0f);
             s.level[d][o] = (uint8_t)roundi(dr[d].o[o].level * 100.0f);
+            s.lrate[d][o] = (uint16_t)roundi(dr[d].o[o].lrate * 1000.0f);
+            s.ldepth[d][o] = (uint8_t)roundi(dr[d].o[o].ldepth * 100.0f);
         }
         s.root[d] = (uint8_t)roundi(dr[d].root);
         s.wave[d] = (uint8_t)roundi(dr[d].wave * 100.0f);
@@ -431,7 +455,9 @@ static void load_sound(void)
 {
     saved_t s;
     uint32_t d, o;
-    if (H->load(&s, sizeof s) == 0 && s.magic == MAGIC) {
+    uint32_t v3 = 0;
+    if (H->load(&s, sizeof s) == 0 && s.magic == MAGIC) v3 = 1;
+    if (v3 || (H->load(&s, SAVED_V2) == 0 && s.magic == MAGIC_V2)) {
         rv_decay = (float)s.rv_dec * 0.25f;
         rv_size = (float)s.rv_siz * 0.01f;
         rv_tone = (float)s.rv_ton * 0.01f;
@@ -443,6 +469,10 @@ static void load_sound(void)
         for (o = 0; o < NO; o++) {
             dr[d].o[o].tune = (float)s.cents[d][o] * 0.01f;
             dr[d].o[o].level = (float)s.level[d][o] * 0.01f;
+            if (v3) {
+                dr[d].o[o].lrate = clampf((float)s.lrate[d][o] * 0.001f, 0.01f, 5.0f);
+                dr[d].o[o].ldepth = (float)s.ldepth[d][o] * 0.01f;
+            }
         }
         dr[d].root = (float)s.root[d];
         dr[d].wave = (float)s.wave[d] * 0.01f;
@@ -463,7 +493,7 @@ static void load_sound(void)
 /* ------------------------------------------------------------------ the panel (main loop) */
 
 static const uint8_t DRONE_KEY[ND] = {0, 2, 4, 6, 7, 9};   /* F3 G3 A3 B3 C4 D4 */
-static uint32_t sel, held, page, dirty = 1, saved_mask, msg_until;   /* page: 0 or the button of the open page */
+static uint32_t sel, held, page, lsub, dirty = 1, saved_mask, msg_until;   /* lsub: the LFO page's 3 pages */   /* page: 0 or the button of the open page */
 #define PAGE_BTNS ((1u << HB_BTN_EDIT) | (1u << HB_BTN_FX) | (1u << HB_BTN_GLO) | (1u << HB_BTN_LFO) | (1u << HB_BTN_ENV))
 static const char *msg = "";
 
@@ -502,6 +532,10 @@ static void knob(uint32_t k, int32_t c)          /* k 0..3, c clicks */
         filt_t *x = &fl[k >> 1];
         if (k & 1u) x->res = clampf(x->res + f * 0.01f, 0.0f, 1.0f);
         else x->cutoff = clampf(x->cutoff * exp2f_(f * (1.0f / 24.0f)), 30.0f, 16000.0f);   /* quarter tones */
+    } else if (page == HB_BTN_LFO && lsub == 0) {           /* the oscillators' LFO speeds */
+        v->o[k].lrate = clampf(v->o[k].lrate * exp2f_(f * (1.0f / 6.0f)), 0.01f, 5.0f);   /* 6 clicks: x2 */
+    } else if (page == HB_BTN_LFO && lsub == 1) {           /* their depths */
+        v->o[k].ldepth = clampf(v->o[k].ldepth + f * 0.02f, 0.0f, 1.0f);
     } else if (page == HB_BTN_LFO) {
         if (k == 0) lfo_rate = clampf(lfo_rate + f * 0.01f, 0.0f, 2.0f);
         else if (k == 1) lfo_depth = clampf(lfo_depth + f * 0.1f, 0.0f, 4.0f);
@@ -542,7 +576,12 @@ static void ui(uint32_t ev, int32_t arg)
             leds();
         } else if (id == HB_BTN_SAVE) { save_sound(); say("SAVED"); }
         else if (id < 14u && (PAGE_BTNS & (1u << id))) {   /* open the page, or close it again */
-            page = page == id ? 0u : id;
+            if (id == HB_BTN_LFO && page == HB_BTN_LFO) {      /* LFO: speeds -> depths -> filter LFO -> back */
+                if (++lsub > 2u) { lsub = 0; page = 0; }
+            } else {
+                page = page == id ? 0u : id;
+                lsub = 0;
+            }
             leds();
             dirty = 1;
         } else dirty = 1;
@@ -636,6 +675,8 @@ static void draw(uint32_t full)
     if (full) dirty = 1;
     if (msg_until && H->ms() > msg_until) { msg_until = 0; msg = ""; dirty = 1; }
     if (H->ms() - last_ms > 500u && load_pct != last_load) { last_load = load_pct; dirty = 1; }
+    if (!page && H->ms() - last_ms > 100u)
+        for (o = 0; o < NO; o++) if (v->o[o].ldepth > 0.0f) dirty = 1;   /* let the level bars breathe */
     if (!dirty || H->ms() - last_ms < 30u) return;
     dirty = 0;
     last_ms = H->ms();
@@ -682,6 +723,13 @@ static void draw(uint32_t full)
             L[1] = "RES A"; V[1] = fl[0].res * 100.0f; D[1] = 0; U[1] = " %"; N[1] = fl[0].res;
             L[2] = "CUT B"; V[2] = fl[1].cutoff; D[2] = 0; U[2] = " HZ"; N[2] = log2f_(fl[1].cutoff * (1.0f / 30.0f)) / 9.0589f;
             L[3] = "RES B"; V[3] = fl[1].res * 100.0f; D[3] = 0; U[3] = " %"; N[3] = fl[1].res;
+        } else if (page == HB_BTN_LFO && lsub < 2u) {
+            static const char *const OL[NO] = {"OSC 1", "OSC 2", "OSC 3", "OSC 4"};
+            for (o = 0; o < NO; o++) {
+                L[o] = OL[o];
+                if (lsub == 0) { V[o] = v->o[o].lrate; D[o] = 2; U[o] = " HZ"; N[o] = log2f_(v->o[o].lrate * 100.0f) / 8.9658f; }
+                else { V[o] = v->o[o].ldepth * 100.0f; D[o] = 0; U[o] = " %"; N[o] = v->o[o].ldepth; }
+            }
         } else if (page == HB_BTN_LFO) {
             L[0] = "RATE"; V[0] = lfo_rate; D[0] = 2; U[0] = " HZ"; N[0] = lfo_rate * 0.5f;
             L[1] = "DEPTH"; V[1] = lfo_depth; D[1] = 1; U[1] = " OCT"; N[1] = lfo_depth * 0.25f;
@@ -703,7 +751,7 @@ static void draw(uint32_t full)
         }
     } else {
         for (o = 0; o < NO; o++) {
-            int32_t y = 4 + (int32_t)o * 22, w = roundi(v->o[o].level * 82.0f);
+            int32_t y = 4 + (int32_t)o * 22, w = roundi(v->o[o].level * v->o[o].lgain * 82.0f);
             p = put_s(b, "K");
             p = put_u(p, o + 1u);
             p = put_s(p, " ");
@@ -721,7 +769,9 @@ static void draw(uint32_t full)
     else if (page == HB_BTN_EDIT) p = put_s(p, "LEVELS   EDIT = BACK");
     else if (page == HB_BTN_FX) p = put_s(p, "REVERB   FX = BACK");
     else if (page == HB_BTN_GLO) p = put_s(p, "FILTERS   GLO = BACK");
-    else if (page == HB_BTN_LFO) p = put_s(p, "LFO + DRIFT   LFO = BACK");
+    else if (page == HB_BTN_LFO && lsub == 0) p = put_s(p, "OSC LFO SPEED   LFO = NEXT");
+    else if (page == HB_BTN_LFO && lsub == 1) p = put_s(p, "OSC LFO DEPTH   LFO = NEXT");
+    else if (page == HB_BTN_LFO) p = put_s(p, "FILTER LFO   LFO = BACK");
     else if (page == HB_BTN_ENV) p = put_s(p, "SWELL + FADE   ENV = BACK");
     else if (held & (1u << HB_BTN_SEL)) p = put_s(p, "SEL: KNOBS = SEMITONES");
     else { p = put_s(p, "CPU "); p = put_u(p, load_pct); p = put_s(p, "%"); }
@@ -740,11 +790,15 @@ static int init(const hb_host_t *h)
     for (d = 0; d < ND; d++) {
         dr[d].gate = 0;
         dr[d].env = 0.0f;
-        for (o = 0; o < NO; o++) dr[d].o[o].ph = H->rand();
+        for (o = 0; o < NO; o++) {
+            dr[d].o[o].ph = H->rand();
+            dr[d].o[o].lph = (float)(H->rand() >> 8) * (1.0f / 16777216.0f);
+            dr[d].o[o].lgain = 1.0f;
+        }
     }
     fl[0].ic1 = fl[0].ic2 = fl[1].ic1 = fl[1].ic2 = 0.0f;
     rv_init();
-    sel = 0; held = 0; page = 0; dirty = 1;
+    sel = 0; held = 0; page = 0; lsub = 0; dirty = 1;
     leds();
     H->log("helio: ready");
     return 0;
@@ -756,6 +810,7 @@ static void release(void)
     for (d = 0; d < ND; d++) { dr[d].gate = 0; dr[d].env = 0.0f; }
     held = 0;
     page = 0;
+    lsub = 0;
 }
 
 HB_DESC = {HB_ABI, "HELIO", init, release, note, cc, render, ui, draw, 0, 0, HB_F_PANEL, 0, 0};
