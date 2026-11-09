@@ -7,6 +7,7 @@ A module for [fm1-dock](https://github.com/joakimeriksson/fm1-dock), inspired by
 - sine → saw morph per drone, slow swell and fade
 - drones 1–3 → filter A (left), drones 4–6 → filter B (right): resonant, saturating low-pass filters,
   swept in opposite directions by one slow LFO
+- an LFO on every oscillator (24 in all), each swelling its oscillator's level at its own speed
 - a big hall reverb: 8-line feedback delay network with diffusion and slow modulation, decay up to 60 s
 - the sound is saved with SAVE and comes back at the next start
 
@@ -24,7 +25,9 @@ A module for [fm1-dock](https://github.com/joakimeriksson/fm1-dock), inspired by
 | **EDIT** page: KNOB 1–4 | level of oscillator 1–4 |
 | **FX** page: KNOB 1–4 | reverb: decay (0.5–60 s), size, tone (dark → bright), mix |
 | **GLO** page: KNOB 1–4 | filter A cutoff, A resonance, B cutoff, B resonance |
-| **LFO** page: KNOB 1–4 | LFO speed, LFO depth, drift amount, filter drive |
+| **LFO** page, 1st tap: KNOB 1–4 | LFO speed of oscillator 1–4 (0.01–5 Hz): its level breathes |
+| **LFO** page, 2nd tap: KNOB 1–4 | depth of those 4 LFOs |
+| **LFO** page, 3rd tap: KNOB 1–4 | filter LFO speed, filter LFO depth, drift amount, filter drive (4th tap: back) |
 | **ENV** page: KNOB 1–2 | selected drone's swell time, fade time |
 | **PLAY** | all drones off / back on |
 | **SAVE** | keep the sound |
