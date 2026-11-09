@@ -134,6 +134,10 @@ int main(void)
         hb_module.draw(1);
         tap(HB_BTN_FX);
         printf("FX again -> page %u\n", page);
+        tap(HB_BTN_LFO); printf("LFO taps: page %u sub %u", page, lsub);
+        tap(HB_BTN_LFO); printf(" -> sub %u", lsub);
+        tap(HB_BTN_LFO); printf(" -> sub %u", lsub);
+        tap(HB_BTN_LFO); printf(" -> page %u\n", page);
         for (d2 = 0; d2 < ND; d2++) hb_module.ui(HB_EV_KEY_DOWN | DRONE_KEY[d2], 0);
         for (b2 = 0; b2 < (uint32_t)(180.0 * 44100 / BLOCK); b2++) {
             double t2 = b2 * (double)BLOCK / 44100.0, e = 0;
@@ -157,6 +161,39 @@ int main(void)
         }
         printf("stress: peak %.2f, rms while playing %.3f, tail 15 s after off %.4f, 59 s after off %.5f, NaN %u, "
                "worst block %.0f us on this computer\n", pk / 32768.0, rms_on, rms_tail_early, rms_tail_late, nan2, worst_us);
+    }
+
+    /* oscillator LFOs: drone 1 alone, osc 1 at 0.5 Hz full depth; the level should rise and fall twice a second... */
+    {
+        uint32_t b3, i, d3;
+        double mn = 1e9, mx = 0;
+        hb_module.init(&host);
+        tap(HB_BTN_FX); enc(HB_ENC_KNOB4, -100); tap(HB_BTN_FX);              /* reverb off: see the dry level */
+        for (d3 = 1; d3 < NO; d3++) dr[0].o[d3].level = 0.0f;                 /* only oscillator 1 */
+        tap(HB_BTN_LFO);                                                        /* speeds */
+        dr[0].o[0].lrate = 0.5f;
+        tap(HB_BTN_LFO); enc(HB_ENC_KNOB1, 50);                                 /* depth 100 % */
+        tap(HB_BTN_LFO); tap(HB_BTN_LFO);                                       /* back */
+        dr[0].att_s = 0.1f;
+        hb_module.ui(HB_EV_KEY_DOWN | DRONE_KEY[0], 0);
+        for (b3 = 0; b3 < (uint32_t)(8.0 * 44100 / BLOCK); b3++) {
+            double e = 0;
+            memset(out, 0, sizeof out);
+            hb_module.render(out, BLOCK);
+            for (i = 0; i < 2 * BLOCK; i++) e += (double)out[i] * out[i];
+            e = sqrt(e / (2.0 * BLOCK)) / 32768.0;
+            if (b3 * BLOCK > 2 * 44100) { if (e < mn) mn = e; if (e > mx) mx = e; }
+        }
+        printf("osc LFO: depth %.0f %%, block rms min %.4f max %.4f\n", dr[0].o[0].ldepth * 100.0f, mn, mx);
+        /* save and load the v3 sound */
+        dr[0].o[2].lrate = 1.23f; dr[0].o[2].ldepth = 0.4f;
+        save_sound(); dr[0].o[2].lrate = 0.05f; dr[0].o[2].ldepth = 0.0f;
+        load_sound();
+        printf("save/load v3: rate %.3f depth %.2f (saved %u bytes)\n", dr[0].o[2].lrate, dr[0].o[2].ldepth, store_n);
+        /* an older v2 sound still loads */
+        store_n = (uint32_t)SAVED_V2; { uint32_t m = MAGIC_V2; memcpy(store, &m, 4); }
+        dr[0].root = 0.0f; load_sound();
+        printf("v2 sound loads: root %.0f\n", dr[0].root);
     }
     return 0;
 }
