@@ -47,6 +47,7 @@ static hb_host_t host = {
 static void key(uint32_t k) { hb_module.ui(HB_EV_KEY_DOWN | k, 0); hb_module.ui(HB_EV_KEY_UP | k, 0); }
 static void btn(uint32_t b, int down) { hb_module.ui((down ? HB_EV_BTN_DOWN : HB_EV_BTN_UP) | b, 0); }
 static void enc(uint32_t e, int32_t c) { hb_module.ui(HB_EV_ENC | e, c); }
+static void tap(uint32_t b) { btn(b, 1); btn(b, 0); }   /* a page button: press opens, press again closes */
 
 int main(void)
 {
@@ -79,15 +80,15 @@ int main(void)
         now_ms = (uint32_t)(t * 1000.0f);
 #define AT(s) (blk == (uint32_t)((s) * 44100.0f / BLOCK))
         if (AT(0.0f)) key(0);                       /* drone 1 on (F3) */
-        if (AT(0.5f)) { btn(HB_BTN_FX, 1); enc(HB_ENC_KNOB1, 8); enc(HB_ENC_KNOB4, 10); btn(HB_BTN_FX, 0); }  /* reverb 24 s, mix 55 % */
+        if (AT(0.5f)) { tap(HB_BTN_FX); enc(HB_ENC_KNOB1, 8); enc(HB_ENC_KNOB4, 10); tap(HB_BTN_FX); }  /* reverb 24 s, mix 55 % */
         if (AT(5.0f)) key(6);                       /* drone 4 on (B3) */
         if (AT(9.0f)) key(2);                       /* drone 2 on (G3) */
-        if (AT(12.0f)) { btn(HB_BTN_GLO, 1); enc(HB_ENC_KNOB1, 20); enc(HB_ENC_KNOB2, 25); btn(HB_BTN_GLO, 0); }
+        if (AT(12.0f)) { tap(HB_BTN_GLO); enc(HB_ENC_KNOB1, 20); enc(HB_ENC_KNOB2, 25); tap(HB_BTN_GLO); }
         if (t >= 16.0f && t < 24.0f && blk % 20 == 0) enc(HB_ENC_KNOB4, 1);   /* slide osc 4 of drone 2 */
         if (AT(25.0f)) enc(HB_ENC_ALGORITHM, 6);    /* drone 2 brighter */
         if (AT(27.0f)) key(7);                      /* drone 5 on (C4) */
         if (AT(29.0f)) key(19);                     /* drone 5's root from the keys */
-        if (AT(30.0f)) { btn(HB_BTN_EDIT, 1); enc(HB_ENC_KNOB3, -20); btn(HB_BTN_EDIT, 0); }
+        if (AT(30.0f)) { tap(HB_BTN_EDIT); enc(HB_ENC_KNOB3, -20); tap(HB_BTN_EDIT); }
         if (AT(32.0f)) { btn(HB_BTN_SAVE, 1); btn(HB_BTN_SAVE, 0); }
         if (AT(36.0f)) { btn(HB_BTN_PLAY, 1); btn(HB_BTN_PLAY, 0); }   /* all off: fades */
         if (blk % 8 == 0) hb_module.draw(0);
@@ -124,10 +125,15 @@ int main(void)
         double worst_us = 0, rms_on = 0, rms_tail_early = 0, rms_tail_late = 0;
         int32_t pk = 0;
         hb_module.init(&host);
-        btn(HB_BTN_FX, 1);
+        tap(HB_BTN_FX);
         enc(HB_ENC_KNOB1, 100); enc(HB_ENC_KNOB2, 50); enc(HB_ENC_KNOB4, 100);
-        btn(HB_BTN_FX, 0);
-        printf("stress: decay %.1f s, size %.2f, mix %.2f\n", rv_decay, rv_size, rv_mix);
+        tap(HB_BTN_FX);
+        printf("stress: decay %.1f s, size %.2f, mix %.2f, page after closing %u\n", rv_decay, rv_size, rv_mix, page);
+        tap(HB_BTN_GLO); tap(HB_BTN_FX);
+        printf("pages: GLO then FX -> page %u (FX is %u); ", page, (uint32_t)HB_BTN_FX);
+        hb_module.draw(1);
+        tap(HB_BTN_FX);
+        printf("FX again -> page %u\n", page);
         for (d2 = 0; d2 < ND; d2++) hb_module.ui(HB_EV_KEY_DOWN | DRONE_KEY[d2], 0);
         for (b2 = 0; b2 < (uint32_t)(180.0 * 44100 / BLOCK); b2++) {
             double t2 = b2 * (double)BLOCK / 44100.0, e = 0;
