@@ -14,10 +14,11 @@
  *   keys F4 .. G5                  play the 2 voices (SEL held: set the selected drone's root)
  *   OCT- / OCT+                    selected drone's root -/+ one octave
  *   SELECT / PRESETS               selected drone's root (semitones) / volume
- *   ALGORITHM                      SWEET: 0 % free tuning .. 100 % every oscillator pulled onto the
+ *   ALGORITHM                      the selected drone's SWEET: 0 % free tuning .. 100 % its 4 oscillators pulled onto the
  *                                  nearest sweet spot: a just ratio to the drone's root (3/2, 5/4, 7/4..),
  *                                  or a hair off it so the two beat in time with the sequencer's tempo
  *   KNOB1..4                       tune oscillator 1..4 (5 cents a click; SEL held: 1 semitone)
+ *   HOME (a short press)           out of any page, back to the selected drone
  *   Each drone has its colour (1 red, 2 orange, 3 yellow, 4 green, 5 blue, 6 violet): the start
  *   screen, and the bars on the pages of the selected drone, are drawn in it.
  *   Pages: press a page button to open it, press it again for its next page; after the last
@@ -141,6 +142,7 @@ typedef struct {
     volatile float vol;             /* 0..1 */
     volatile float att_s, rel_s;    /* seconds */
     volatile int32_t gate;          /* 1 on (latched) */
+    volatile float sweet;           /* its SWEET knob, 0..1 */
     float env;                      /* audio side only */
 } drone_t;
 
@@ -152,7 +154,6 @@ typedef struct {
 
 static drone_t dr[ND];
 static filt_t fl[2];
-static volatile float sweet;                    /* the SWEET knob, 0..1 */
 static volatile float lfo_rate = 0.05f, lfo_depth = 1.5f, drift_amt = 0.08f, drive = 1.8f;
 static float lfo_ph;
 static volatile uint32_t load_pct;              /* render time, % of a block */
@@ -505,7 +506,7 @@ static void render(int32_t *out, uint32_t n)
 {
     static float bus[2][256], lr[512], vb[256];
     uint32_t t0 = H->ticks(), d, o, i, j;
-    float da = drift_amt * (1.0f - 0.8f * sweet), drv = drive, sw = sweet;   /* sweet spots want steady drift */
+    float drv = drive;
     if (n > 256u) n = 256u;
 
     while (vq_r != vq_w) {                                  /* notes from the keys */
@@ -523,6 +524,7 @@ static void render(int32_t *out, uint32_t n)
         float target = v->gate ? 1.0f : 0.0f;
         float step = 1.0f / (clampf(v->gate ? v->att_s : v->rel_s, 0.05f, 60.0f) * SR);
         float env = v->env, w = v->wave, g = v->vol * 0.25f;
+        float sw = v->sweet, da = drift_amt * (1.0f - 0.8f * sw);   /* sweet spots want steady drift */
         float *b = bus[d < 3u ? 0 : 1];
         uint32_t inc[NO];
         float lev[NO], dlev[NO], dts[NO], idt[NO];
@@ -653,9 +655,11 @@ typedef struct {
     uint8_t sq_gate, sq_len, sq_rest, sq_note[NS];
     uint8_t sh_cut, sh_pitch, noise, dl_feed, dl_tone, dl_mix;   /* 0.1 oct, semitone, %, %, %, % */
     uint8_t v4_pad[2];              /* (a v4 sound was 232 bytes long) */
-    uint8_t sweet;                  /* v5: % */
+    uint8_t sweet[ND];              /* v6: % per drone (v5: one for all, 236 bytes) */
 } saved_t;
-#define MAGIC 0x48454C35u           /* "HEL5" */
+#define MAGIC 0x48454C36u           /* "HEL6" */
+#define MAGIC_V5 0x48454C35u        /* "HEL5": one SWEET for all the drones */
+#define SAVED_V5 236u
 #define MAGIC_V4 0x48454C34u        /* "HEL4": before SWEET */
 #define SAVED_V4 ((uint32_t)__builtin_offsetof(saved_t, sweet))
 #define MAGIC_V3 0x48454C33u        /* "HEL3": before the voices */
@@ -704,7 +708,7 @@ static void defaults(void)
     lfo_rate = 0.05f; lfo_depth = 1.5f; drift_amt = 0.08f; drive = 1.8f;
     rv_decay = 12.0f; rv_size = 0.85f; rv_tone = 0.5f; rv_mix = 0.35f;
     voice_defaults();
-    sweet = 0.0f;
+    for (d = 0; d < ND; d++) dr[d].sweet = 0.0f;
 }
 
 static uint8_t pc(float x) { return (uint8_t)roundi(clampf(x, 0.0f, 1.0f) * 100.0f); }
@@ -753,7 +757,7 @@ static void save_sound(void)
     for (d = 0; d < NS; d++) s.sq_note[d] = sq_note[d];
     s.sh_cut = (uint8_t)roundi(sh_cut * 10.0f); s.sh_pitch = (uint8_t)roundi(sh_pitch); s.noise = pc(noise_lv);
     s.dl_feed = pc(dl_feed); s.dl_tone = pc(dl_tone); s.dl_mix = pc(dl_mix);
-    s.sweet = pc(sweet);
+    for (d = 0; d < ND; d++) s.sweet[d] = pc(dr[d].sweet);
     H->save(&s, sizeof s);
 }
 
@@ -761,7 +765,8 @@ static void load_sound(void)
 {
     saved_t s;
     uint32_t d, o, ver = 0;
-    if (H->load(&s, sizeof s) == 0 && s.magic == MAGIC) ver = 5;
+    if (H->load(&s, sizeof s) == 0 && s.magic == MAGIC) ver = 6;
+    else if (H->load(&s, SAVED_V5) == 0 && s.magic == MAGIC_V5) ver = 5;
     else if (H->load(&s, SAVED_V4) == 0 && s.magic == MAGIC_V4) ver = 4;
     else if (H->load(&s, SAVED_V3) == 0 && s.magic == MAGIC_V3) ver = 3;
     else if (H->load(&s, SAVED_V2) == 0 && s.magic == MAGIC_V2) ver = 2;
@@ -812,13 +817,15 @@ static void load_sound(void)
     for (d = 0; d < NS; d++) sq_note[d] = s.sq_note[d];
     sh_cut = (float)s.sh_cut * 0.1f; sh_pitch = (float)s.sh_pitch; noise_lv = (float)s.noise * 0.01f;
     dl_feed = (float)s.dl_feed * 0.01f; dl_tone = (float)s.dl_tone * 0.01f; dl_mix = (float)s.dl_mix * 0.01f;
-    if (ver >= 5u) sweet = (float)s.sweet * 0.01f;
+    for (d = 0; d < ND; d++)
+        if (ver >= 5u) dr[d].sweet = (float)s.sweet[ver >= 6u ? d : 0] * 0.01f;
 }
 
 /* ------------------------------------------------------------------ the panel (main loop) */
 
 static const uint8_t DRONE_KEY[ND] = {0, 2, 4, 6, 7, 9};   /* F3 G3 A3 B3 C4 D4 */
 static uint32_t sel, held, page, lsub, dirty = 1, saved_mask, msg_until;   /* page: 0 or the open page's button */
+static uint32_t home_ms;                        /* when HOME went down */
 static uint32_t rec, rec_n;                     /* recording the steps: on, steps so far */
 static uint8_t key_held[27];                    /* the note each upper key started (0: none) */
 #define PAGE_BTNS ((1u << HB_BTN_EDIT) | (1u << HB_BTN_FX) | (1u << HB_BTN_GLO) | (1u << HB_BTN_LFO) | \
@@ -976,6 +983,7 @@ static void ui(uint32_t ev, int32_t arg)
         break;
     case HB_EV_BTN_DOWN:
         if (id < 32u) held |= 1u << id;
+        if (id == HB_BTN_HOME) home_ms = H->ms();
         if (id == HB_BTN_OCT_DOWN) { v->root = clampf(v->root - 12.0f, 12.0f, 96.0f); dirty = 1; }
         else if (id == HB_BTN_OCT_UP) { v->root = clampf(v->root + 12.0f, 12.0f, 96.0f); dirty = 1; }
         else if (id == HB_BTN_SEL && rec) rec_step(-1);
@@ -1003,6 +1011,11 @@ static void ui(uint32_t ev, int32_t arg)
         break;
     case HB_EV_BTN_UP:
         if (id < 32u) held &= ~(1u << id);
+        if (id == HB_BTN_HOME && H->ms() - home_ms < 1000u && page) {   /* a short HOME: back to the drone */
+            page = 0;
+            lsub = 0;
+            leds();
+        }
         dirty = 1;
         break;
     case HB_EV_ENC:
@@ -1012,8 +1025,8 @@ static void ui(uint32_t ev, int32_t arg)
         else if (id == HB_ENC_ALGORITHM) {                  /* SWEET */
             static char sm[16];
             sweet_update();
-            sweet = clampf(sweet + (float)arg * 0.02f, 0.0f, 1.0f);
-            put_s(put_u(put_s(sm, "SWEET "), (uint32_t)roundi(sweet * 100.0f)), "%");
+            v->sweet = clampf(v->sweet + (float)arg * 0.02f, 0.0f, 1.0f);
+            put_s(put_u(put_s(sm, "SWEET "), (uint32_t)roundi(v->sweet * 100.0f)), "%");
             say(sm);
         }
         else if (id == HB_ENC_PRESETS) v->vol = clampf(v->vol + (float)arg * 0.02f, 0.0f, 1.0f);
@@ -1279,7 +1292,7 @@ static void draw_home(void)                     /* the selected drone: its oscil
     else if (SEL_HELD) { p = put_s(b, "CPU "); p = put_u(p, load_pct); put_s(p, "%"); }
     else { p = put_s(b, "D"); p = put_u(p, sel + 1u); p = put_s(p, " "); put_note(p, roundi(v->root)); }
     T(4, 24, 1, b, dc);
-    if (sweet > 0.0f) R(4, 53, roundi(sweet * 116.0f), 3, C_WHT);   /* how sweet: a line under the name */
+    if (v->sweet > 0.0f) R(4, 53, roundi(v->sweet * 116.0f), 3, C_WHT);   /* how sweet: a line under the name */
     if (!*msg)
         for (d = 0; d < ND; d++) {                          /* the six drones, each in its colour */
             int32_t x = 128 + 18 * (int32_t)d, e = roundi(dr[d].env * 20.0f);
@@ -1291,13 +1304,13 @@ static void draw_home(void)                     /* the selected drone: its oscil
         }
     for (o = 0; o < NO; o++) {
         osc_t *s = &v->o[o];
-        float t = s->tune + sweet * (s->sweet_t - s->tune), off = t - s->sweet_t;   /* what sounds */
+        float t = s->tune + v->sweet * (s->sweet_t - s->tune), off = t - s->sweet_t;   /* what sounds */
         row_t r;
         static char u[NO][8];
         r.name = "OSC";
         r.unit = "ST";
         r.ucol = 0;
-        if (sweet > 0.0f) {                                 /* the sweet spot's ratio; white when it is on it */
+        if (v->sweet > 0.0f) {                              /* the sweet spot's ratio; white when it is on it */
             put_s(u[o], JI_NAME[s->ji]);
             if (s->beat) put_s(u[o] + slen(u[o]), "~");
             r.unit = u[o];
@@ -1354,7 +1367,7 @@ static void draw(uint32_t full)
         for (k = 0; k < NO; k++) if (dr[sel].o[k].ldepth > 0.0f) dirty = 1;   /* the level bars breathe */
         for (k = 0; k < ND; k++) if (dr[k].env > 0.0f && dr[k].env < 1.0f) dirty = 1;   /* swelling, fading */
     }
-    if (sweet > 0.0f && H->ms() - last_sw > 100u) { last_sw = H->ms(); sweet_update(); if (home) dirty = 1; }
+    if (H->ms() - last_sw > 100u) { last_sw = H->ms(); sweet_update(); if (home && dr[sel].sweet > 0.0f) dirty = 1; }
     if (!dirty || H->ms() - last_ms < 30u) return;
     dirty = 0;
     last_ms = H->ms();
