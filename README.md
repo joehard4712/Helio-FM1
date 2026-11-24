@@ -16,14 +16,14 @@ A module for [fm1-dock](https://github.com/joakimeriksson/fm1-dock), inspired by
 - an echo on the voices (up to 1 s, tape-like, stereo)
 - a big hall reverb on everything: 8-line feedback delay network with diffusion and slow modulation,
   decay up to 60 s
-- **SWEET** (the ALGORITHM knob): pulls every drone oscillator onto the nearest sweet spot, from free
-  tuning (0 %) to locked (100 %)
+- **SWEET** (the ALGORITHM knob), one per drone: pulls the drone's 4 oscillators onto their nearest sweet
+  spots, from free tuning (0 %) to locked (100 %)
 - each drone has its own colour, so one look tells you which drone you are editing
 - the sound is saved with SAVE and comes back at the next start (sounds saved by older HELIOs still load)
 
 ## SWEET: the sweet-spot knob
 
-Turn **ALGORITHM**. At 0 % the oscillators sound exactly where you tuned them. Turning it up pulls each
+Every drone has its own SWEET: turn **ALGORITHM** and it sets the selected drone's. At 0 % its oscillators sound exactly where you tuned them. Turning it up pulls each
 one towards its nearest sweet spot; at 100 % it sits on it, and the tuning knobs jump from sweet spot
 to sweet spot. A sweet spot is either
 
@@ -69,7 +69,8 @@ their levels as bars.
 | hold **SEL** + key F4 … G5 | root note of the selected drone (two octaves lower) |
 | **OCT− / OCT+** | selected drone one octave down / up |
 | **SELECT** knob | selected drone's root, one semitone per click |
-| **ALGORITHM** knob | **SWEET**: 0 % free tuning → 100 % locked on sweet spots |
+| **ALGORITHM** knob | selected drone's **SWEET**: 0 % free tuning → 100 % locked on sweet spots |
+| **HOME**, a short press | out of any page, straight back to the selected drone |
 | **PRESETS** knob | selected drone's volume |
 | **KNOB 1–4** | tune oscillator 1–4, 5 cents per click (hold **SEL**: 1 semitone) |
 | **PLAY** | sequencer start / stop |
@@ -80,6 +81,7 @@ their levels as bars.
 
 Pages: press a page button to open it (its light comes on). Pages with more than one part show
 "1/3" in the corner: press the same button again for the next part. After the last part it closes.
+A short press on HOME leaves any page at once and goes back to the selected drone.
 
 | Page | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
 |---|---|---|---|---|
