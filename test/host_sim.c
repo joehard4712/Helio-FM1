@@ -34,12 +34,13 @@ static int h_load(void *p, uint32_t n) { if (store_n != n) return -1; memcpy(p, 
 static void h_save(const void *p, uint32_t n) { memcpy(store, p, n); store_n = n; }
 static void h_midi(uint32_t a, uint32_t b, uint32_t c) { (void)a; (void)b; (void)c; }
 static uint32_t h_master(void) { return 4096; }
+static int32_t h_tw(uint32_t big, const char *s) { return (int32_t)strlen(s) * (big ? 16 : 8); }
 
 static hb_host_t host = {
     .abi = HB_ABI, .size = sizeof(hb_host_t), .ms = h_ms, .ticks = h_ticks, .log = h_log, .log_u32 = h_log_u32,
     .fill = h_fill, .text = h_text, .cv_begin = h_cvb, .cv_rect = h_cvr, .cv_line = h_cvl, .cv_pixel = h_cvp,
     .cv_text = h_cvt, .cv_blit = h_cvblit, .led = h_led, .rand = h_rand, .load = h_load, .save = h_save,
-    .midi_send = h_midi, .master = h_master,
+    .midi_send = h_midi, .master = h_master, .text_w = h_tw,
 };
 
 #define BLOCK 256
@@ -48,6 +49,9 @@ static void key(uint32_t k) { hb_module.ui(HB_EV_KEY_DOWN | k, 0); hb_module.ui(
 static void btn(uint32_t b, int down) { hb_module.ui((down ? HB_EV_BTN_DOWN : HB_EV_BTN_UP) | b, 0); }
 static void enc(uint32_t e, int32_t c) { hb_module.ui(HB_EV_ENC | e, c); }
 static void tap(uint32_t b) { btn(b, 1); btn(b, 0); }   /* a page button: press opens, press again closes */
+static void kdown(uint32_t k) { hb_module.ui(HB_EV_KEY_DOWN | k, 0); }
+static void kup(uint32_t k) { hb_module.ui(HB_EV_KEY_UP | k, 0); }
+static void sel_and(void (*f)(uint32_t), uint32_t a) { btn(HB_BTN_SEL, 1); f(a); btn(HB_BTN_SEL, 0); }
 
 int main(void)
 {
@@ -80,17 +84,26 @@ int main(void)
         now_ms = (uint32_t)(t * 1000.0f);
 #define AT(s) (blk == (uint32_t)((s) * 44100.0f / BLOCK))
         if (AT(0.0f)) key(0);                       /* drone 1 on (F3) */
-        if (AT(0.5f)) { tap(HB_BTN_FX); enc(HB_ENC_KNOB1, 8); enc(HB_ENC_KNOB4, 10); tap(HB_BTN_FX); }  /* reverb 24 s, mix 55 % */
+        if (AT(0.5f)) { tap(HB_BTN_FX); enc(HB_ENC_KNOB1, 8); enc(HB_ENC_KNOB4, 10); tap(HB_BTN_FX); tap(HB_BTN_FX); }  /* reverb 24 s, mix 55 % */
         if (AT(5.0f)) key(6);                       /* drone 4 on (B3) */
         if (AT(9.0f)) key(2);                       /* drone 2 on (G3) */
         if (AT(12.0f)) { tap(HB_BTN_GLO); enc(HB_ENC_KNOB1, 20); enc(HB_ENC_KNOB2, 25); tap(HB_BTN_GLO); }
         if (t >= 16.0f && t < 24.0f && blk % 20 == 0) enc(HB_ENC_KNOB4, 1);   /* slide osc 4 of drone 2 */
         if (AT(25.0f)) enc(HB_ENC_ALGORITHM, 6);    /* drone 2 brighter */
         if (AT(27.0f)) key(7);                      /* drone 5 on (C4) */
-        if (AT(29.0f)) key(19);                     /* drone 5's root from the keys */
+        if (AT(29.0f)) sel_and(key, 19);            /* drone 5's root from the keys (SEL held) */
         if (AT(30.0f)) { tap(HB_BTN_EDIT); enc(HB_ENC_KNOB3, -20); tap(HB_BTN_EDIT); }
         if (AT(32.0f)) { btn(HB_BTN_SAVE, 1); btn(HB_BTN_SAVE, 0); }
-        if (AT(36.0f)) { btn(HB_BTN_PLAY, 1); btn(HB_BTN_PLAY, 0); }   /* all off: fades */
+        if (AT(36.0f)) sel_and(tap, HB_BTN_PLAY);   /* SEL + PLAY: all drones off, they fade */
+        if (AT(37.0f)) kdown(14);                   /* the voices from the upper keys: G4 */
+        if (AT(37.5f)) kdown(18);                   /* B4 with it: duophonic */
+        if (AT(38.5f)) { kup(14); kup(18); }
+        if (AT(40.0f)) { tap(HB_BTN_LFO); tap(HB_BTN_LFO); tap(HB_BTN_LFO); tap(HB_BTN_LFO);   /* noise + S&H */
+                         enc(HB_ENC_KNOB3, 7); enc(HB_ENC_KNOB4, 10); tap(HB_BTN_LFO);
+                         tap(HB_BTN_PLAY); }       /* the sequencer: voice 1 */
+        if (AT(46.0f)) kdown(19);                   /* a key over it: voice 2 */
+        if (AT(47.0f)) kup(19);
+        if (AT(52.0f)) tap(HB_BTN_PLAY);            /* stop: the echo rings out */
         if (blk % 8 == 0) hb_module.draw(0);
 
         memset(out, 0, sizeof out);
@@ -114,7 +127,7 @@ int main(void)
     /* reload the saved sound into a fresh init: the round trip */
     float before = dr[4].root;
     hb_module.init(&host);
-    printf("save/load: root of drone 5 %.0f -> %.0f, saved %u bytes\n", before, dr[4].root, store_n);
+    printf("save/load: root of drone 5 %.0f -> %.0f, saved %u bytes (sizeof saved_t %u)\n", before, dr[4].root, store_n, (uint32_t)sizeof(saved_t));
     printf("peak %.2f, rms %.3f, clipped samples %u, NaN %u, worst block %.0f us on this computer\n",
            peak / 32768.0, sqrt(sum2 / (2.0 * total)) / 32768.0, clips, nans, (double)worst * 1e6 / CLOCKS_PER_SEC);
     printf("text calls %d, blits %d\n", text_calls, blit_calls);
@@ -127,23 +140,26 @@ int main(void)
         hb_module.init(&host);
         tap(HB_BTN_FX);
         enc(HB_ENC_KNOB1, 100); enc(HB_ENC_KNOB2, 50); enc(HB_ENC_KNOB4, 100);
-        tap(HB_BTN_FX);
+        tap(HB_BTN_FX); tap(HB_BTN_FX);
         printf("stress: decay %.1f s, size %.2f, mix %.2f, page after closing %u\n", rv_decay, rv_size, rv_mix, page);
         tap(HB_BTN_GLO); tap(HB_BTN_FX);
         printf("pages: GLO then FX -> page %u (FX is %u); ", page, (uint32_t)HB_BTN_FX);
         hb_module.draw(1);
-        tap(HB_BTN_FX);
-        printf("FX again -> page %u\n", page);
+        tap(HB_BTN_FX); printf("FX again -> sub %u", lsub);
+        tap(HB_BTN_FX); printf(" -> page %u\n", page);
         tap(HB_BTN_LFO); printf("LFO taps: page %u sub %u", page, lsub);
+        tap(HB_BTN_LFO); printf(" -> sub %u", lsub);
         tap(HB_BTN_LFO); printf(" -> sub %u", lsub);
         tap(HB_BTN_LFO); printf(" -> sub %u", lsub);
         tap(HB_BTN_LFO); printf(" -> page %u\n", page);
         for (d2 = 0; d2 < ND; d2++) hb_module.ui(HB_EV_KEY_DOWN | DRONE_KEY[d2], 0);
+        dl_feed = 0.95f; dl_mix = 1.0f; dl_time = 0.05f; v_res = 1.0f; noise_lv = 1.0f; sh_rate = 8.0f; sh_cut = 4.0f;
+        sq_bpm = 300.0f; tap(HB_BTN_PLAY); kdown(26);       /* both voices too, at their worst */
         for (b2 = 0; b2 < (uint32_t)(180.0 * 44100 / BLOCK); b2++) {
             double t2 = b2 * (double)BLOCK / 44100.0, e = 0;
             clock_t c1;
             uint32_t i;
-            if (b2 == (uint32_t)(120.0 * 44100 / BLOCK)) { btn(HB_BTN_PLAY, 1); btn(HB_BTN_PLAY, 0); }
+            if (b2 == (uint32_t)(120.0 * 44100 / BLOCK)) { sel_and(tap, HB_BTN_PLAY); tap(HB_BTN_PLAY); kup(26); }
             memset(out, 0, sizeof out);
             c1 = clock();
             hb_module.render(out, BLOCK);
@@ -168,12 +184,12 @@ int main(void)
         uint32_t b3, i, d3;
         double mn = 1e9, mx = 0;
         hb_module.init(&host);
-        tap(HB_BTN_FX); enc(HB_ENC_KNOB4, -100); tap(HB_BTN_FX);              /* reverb off: see the dry level */
+        tap(HB_BTN_FX); enc(HB_ENC_KNOB4, -100); tap(HB_BTN_FX); tap(HB_BTN_FX);   /* reverb off: see the dry level */
         for (d3 = 1; d3 < NO; d3++) dr[0].o[d3].level = 0.0f;                 /* only oscillator 1 */
         tap(HB_BTN_LFO);                                                        /* speeds */
         dr[0].o[0].lrate = 0.5f;
         tap(HB_BTN_LFO); enc(HB_ENC_KNOB1, 50);                                 /* depth 100 % */
-        tap(HB_BTN_LFO); tap(HB_BTN_LFO);                                       /* back */
+        tap(HB_BTN_LFO); tap(HB_BTN_LFO); tap(HB_BTN_LFO);                      /* back */
         dr[0].att_s = 0.1f;
         hb_module.ui(HB_EV_KEY_DOWN | DRONE_KEY[0], 0);
         for (b3 = 0; b3 < (uint32_t)(8.0 * 44100 / BLOCK); b3++) {
@@ -194,6 +210,40 @@ int main(void)
         store_n = (uint32_t)SAVED_V2; { uint32_t m = MAGIC_V2; memcpy(store, &m, 4); }
         dr[0].root = 0.0f; load_sound();
         printf("v2 sound loads: root %.0f\n", dr[0].root);
+    }
+    /* voices, the sequencer, recording, the S&H */
+    {
+        uint32_t b4, i, nz = 0, steps_seen = 0, last = 99;
+        hb_module.init(&host);
+        kdown(12); hb_module.render(out, BLOCK);
+        printf("voices: key F4 -> voice note %d stage %u; ", vo[0].key, vo[0].stage);
+        kdown(16); hb_module.render(out, BLOCK);
+        printf("A4 -> voice 2 note %d; ", vo[1].key);
+        kup(12); kup(16); hb_module.render(out, BLOCK);
+        printf("released: stages %u %u\n", vo[0].stage, vo[1].stage);
+        tap(HB_BTN_REC);
+        kdown(12); kup(12); kdown(14); kup(14); btn(HB_BTN_SEL, 1); btn(HB_BTN_SEL, 0); kdown(19); kup(19);
+        tap(HB_BTN_REC);
+        printf("record: notes %u %u %u(rest %u) %u, length %d, page %u sub %u\n", sq_note[0], sq_note[1], sq_note[2],
+               (sq_rest >> 2) & 1u, sq_note[3], sq_len, page, lsub);
+        tap(HB_BTN_PLAY);
+        for (b4 = 0; b4 < (uint32_t)(8.0 * 44100 / BLOCK); b4++) {
+            memset(out, 0, sizeof out);
+            hb_module.render(out, BLOCK);
+            for (i = 0; i < 2 * BLOCK; i++) if (out[i]) { nz++; break; }
+            if (sq_pos != last) { last = sq_pos; steps_seen++; }
+        }
+        printf("sequencer: %u steps in 8 s at %.0f BPM, sounding blocks %u, PLAY led on: %u\n", steps_seen, sq_bpm, nz, sq_run);
+        tap(HB_BTN_PLAY);
+        /* v4 save and load, then an old v3 sound */
+        v_cut = 2345.0f; sq_note[4] = 77; dl_time = 0.6f; v_oct = -1; sh_rate = 3.0f;
+        save_sound(); voice_defaults(); load_sound();
+        printf("save/load v4: cut %.0f step5 %u echo %.3f oct %d S&H %.2f (%u bytes)\n", v_cut, sq_note[4], dl_time, v_oct, sh_rate, store_n);
+        store_n = (uint32_t)SAVED_V3; { uint32_t m = MAGIC_V3; memcpy(store, &m, 4); }
+        dr[0].root = 0.0f; v_cut = 1.0f; load_sound();
+        printf("v3 sound loads: root %.0f, voice cut stays %.0f\n", dr[0].root, v_cut);
+        hb_module.cc(0, 123, 0); hb_module.render(out, BLOCK);
+        printf("CC 123: voices releasing %u %u, seq %u\n", vo[0].stage, vo[1].stage, sq_run);
     }
     return 0;
 }
