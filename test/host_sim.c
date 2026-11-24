@@ -245,18 +245,25 @@ int main(void)
         /* SWEET: osc 3 at +6.90 st goes to 3/2 (+7.02); osc 2 a hair off unison may beat in tempo */
         dr[0].o[2].tune = 6.90f; dr[0].o[1].tune = 0.12f; dr[0].root = 36.0f; sq_bpm = 120.0f;
         enc(HB_ENC_ALGORITHM, 50);
-        printf("sweet %.0f %%: osc3 %.2f -> %.3f (%s%s), osc2 %.2f -> %.3f (%s%s)\n", sweet * 100.0f,
+        printf("sweet %.0f %% (drone 2: %.0f %%): osc3 %.2f -> %.3f (%s%s), osc2 %.2f -> %.3f (%s%s)\n", dr[0].sweet * 100.0f, dr[1].sweet * 100.0f,
                dr[0].o[2].tune, dr[0].o[2].sweet_t, JI_NAME[dr[0].o[2].ji], dr[0].o[2].beat ? " beating" : "",
                dr[0].o[1].tune, dr[0].o[1].sweet_t, JI_NAME[dr[0].o[1].ji], dr[0].o[1].beat ? " beating" : "");
         {   /* the beat: osc 2 against 1/1 at C2 (65.4 Hz) */
             float f0 = 440.0f * powf(2.0f, (36.0f - 69.0f) / 12.0f), f1 = f0 * powf(2.0f, dr[0].o[1].sweet_t / 12.0f);
             printf("  beat %.3f Hz = %.2f steps at 120 BPM\n", f1 - f0, (f1 - f0) / 2.0f);
         }
-        save_sound(); sweet = 0.0f; load_sound();
-        printf("save/load v5: sweet %.0f %% (%u bytes)\n", sweet * 100.0f, store_n);
+        dr[3].sweet = 0.4f; save_sound(); dr[0].sweet = dr[3].sweet = 0.0f; load_sound();
+        printf("save/load v6: sweet drone 1 %.0f %%, drone 4 %.0f %%, drone 2 %.0f %% (%u bytes)\n", dr[0].sweet * 100.0f, dr[3].sweet * 100.0f, dr[1].sweet * 100.0f, store_n);
+        store_n = SAVED_V5; { uint32_t m = MAGIC_V5; memcpy(store, &m, 4); store[232] = 55; }
+        load_sound();
+        printf("v5 sound loads: every drone's sweet %.0f %% %.0f %%\n", dr[0].sweet * 100.0f, dr[5].sweet * 100.0f);
         store_n = (uint32_t)SAVED_V4; { uint32_t m = MAGIC_V4; memcpy(store, &m, 4); }
-        sweet = 0.3f; v_cut = 1.0f; load_sound();
-        printf("v4 sound loads: voice cut %.0f, sweet stays %.0f %%\n", v_cut, sweet * 100.0f);
+        dr[0].sweet = 0.3f; v_cut = 1.0f; load_sound();
+        printf("v4 sound loads: voice cut %.0f, sweet stays %.0f %%\n", v_cut, dr[0].sweet * 100.0f);
+        tap(HB_BTN_LFO); tap(HB_BTN_LFO); now_ms = 100000; btn(HB_BTN_HOME, 1); now_ms += 200; btn(HB_BTN_HOME, 0);
+        printf("short HOME on LFO 2/4 -> page %u sub %u\n", page, lsub);
+        tap(HB_BTN_FX); btn(HB_BTN_HOME, 1); now_ms += 1600; btn(HB_BTN_HOME, 0);
+        printf("long HOME (the module list) on FX -> page %u (stays)\n", page);
         hb_module.cc(0, 123, 0); hb_module.render(out, BLOCK);
         printf("CC 123: voices releasing %u %u, seq %u\n", vo[0].stage, vo[1].stage, sq_run);
     }
