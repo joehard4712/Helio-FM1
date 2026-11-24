@@ -14,9 +14,10 @@
  *   keys F4 .. G5                  play the 2 voices (SEL held: set the selected drone's root)
  *   OCT- / OCT+                    selected drone's root -/+ one octave
  *   SELECT / PRESETS               selected drone's root (semitones) / volume
- *   ALGORITHM                      the selected drone's SWEET: 0 % free tuning .. 100 % its 4 oscillators pulled onto the
- *                                  nearest sweet spot: a just ratio to the drone's root (3/2, 5/4, 7/4..),
- *                                  or a hair off it so the two beat in time with the sequencer's tempo
+ *   ALGORITHM                      the selected drone's SWEET: 0 % as tuned .. 100 % its chord, tuned pure.
+ *                                  Drone 1's chord is the one nearest its tuning; drones 2..6 follow it
+ *                                  in a progression
+ *   SEL + ALGORITHM                the progression: DREAM, POP, DARK, STILL, FIFTHS
  *   KNOB1..4                       tune oscillator 1..4 (5 cents a click; SEL held: 1 semitone)
  *   HOME (a short press)           out of any page, back to the selected drone
  *   Each drone has its colour (1 red, 2 orange, 3 yellow, 4 green, 5 blue, 6 violet): the start
@@ -128,8 +129,8 @@ typedef struct {
     volatile float level;           /* 0..1 */
     volatile float lrate;           /* its own LFO: Hz (0.01..5) */
     volatile float ldepth;          /* 0..1: how deep it pulls the level down */
-    volatile float sweet_t;         /* the nearest sweet spot, semitones (main loop) */
-    uint8_t ji, beat;               /* which ratio; 1: the sweet spot beats in tempo */
+    volatile float sweet_t;         /* its note in its drone's chord, semitones (main loop) */
+    uint8_t tone;                   /* which tone of its drone's chord */
     float drift, drift_target;      /* audio side only */
     float lph, lgain;               /* audio side: LFO phase 0..1, the gain it gave last block */
     uint32_t ph;
@@ -143,6 +144,7 @@ typedef struct {
     volatile float att_s, rel_s;    /* seconds */
     volatile int32_t gate;          /* 1 on (latched) */
     volatile float sweet;           /* its SWEET knob, 0..1 */
+    uint8_t ch_type, ch_root;       /* its chord: type, root (0..11) */
     float env;                      /* audio side only */
 } drone_t;
 
@@ -524,7 +526,7 @@ static void render(int32_t *out, uint32_t n)
         float target = v->gate ? 1.0f : 0.0f;
         float step = 1.0f / (clampf(v->gate ? v->att_s : v->rel_s, 0.05f, 60.0f) * SR);
         float env = v->env, w = v->wave, g = v->vol * 0.25f;
-        float sw = v->sweet, da = drift_amt * (1.0f - 0.8f * sw);   /* sweet spots want steady drift */
+        float sw = v->sweet, da = drift_amt * (1.0f - 0.8f * sw);   /* pure chords want steady drift */
         float *b = bus[d < 3u ? 0 : 1];
         uint32_t inc[NO];
         float lev[NO], dlev[NO], dts[NO], idt[NO];
@@ -592,47 +594,112 @@ static void render(int32_t *out, uint32_t n)
     load_pct = (H->ticks() - t0) * 100u / (5805u * 24u);
 }
 
-/* ------------------------------------------------------------------ sweet spots (main loop)
- * For every oscillator: the nearest just ratio to its drone's root (in any octave), and around it the
- * tunings a hair off that beat 1/4, 1/2, 1 or 2 times a sequencer step: whichever is nearest is its
- * sweet spot. SWEET pulls the oscillator that far towards it (render). */
+/* ------------------------------------------------------------------ SWEET: chords (main loop)
+ * Drone 1 finds the chord nearest to how its 4 oscillators are tuned: 8 chord types on 12 roots, each
+ * oscillator to its own chord tone (in its own octave), the least movement in all. Drones 2..6 take the
+ * next chords of a progression in drone 1's key (major or minor, from its chord). Every chord is tuned
+ * pure: just ratios from its root. SWEET morphs each drone from its tuning to its chord (render). */
 
-static const float JI[13] = {0.0f, 1.1173129f, 2.0391000f, 3.1564129f, 3.8631371f, 4.9804500f, 5.8251344f,
-                             7.0195500f, 8.1368629f, 8.8435871f, 9.6882590f, 10.882687f, 12.0f};
-static const char *const JI_NAME[13] = {"1/1", "16/15", "9/8", "6/5", "5/4", "4/3", "7/5", "3/2", "8/5", "5/3",
-                                        "7/4", "15/8", "2/1"};
+#define NCH 8u
+typedef struct { const char *name; float t[4]; uint8_t minor; } chord_t;
+static const chord_t CH[NCH] = {
+    {"MAJ7", {0.0f, 3.8631371f, 7.0195500f, 10.882687f}, 0},   /* 1 5/4 3/2 15/8 */
+    {"7",    {0.0f, 3.8631371f, 7.0195500f, 9.6882590f}, 0},   /* 1 5/4 3/2 7/4 */
+    {"6",    {0.0f, 3.8631371f, 7.0195500f, 8.8435871f}, 0},   /* 1 5/4 3/2 5/3 */
+    {"ADD9", {0.0f, 2.0391000f, 3.8631371f, 7.0195500f}, 0},   /* 1 9/8 5/4 3/2 */
+    {"SUS4", {0.0f, 4.9804500f, 7.0195500f, 0.0f}, 0},         /* 1 4/3 3/2 1 */
+    {"5",    {0.0f, 7.0195500f, 0.0f, 7.0195500f}, 0},         /* 1 3/2 1 3/2 */
+    {"MIN7", {0.0f, 3.1564129f, 7.0195500f, 10.175629f}, 1},   /* 1 6/5 3/2 9/5 */
+    {"MIN6", {0.0f, 3.1564129f, 7.0195500f, 8.8435871f}, 1},   /* 1 6/5 3/2 5/3 */
+};
+enum { C_MAJ7, C_DOM7, C_SIX, C_ADD9, C_SUS4, C_FIVE, C_MIN7, C_MIN6 };
+static const char *tone_name(float t)            /* a chord tone's name, from its interval */
+{
+    static const float IV[10] = {0.0f, 2.04f, 3.16f, 3.86f, 4.98f, 7.02f, 8.84f, 9.69f, 10.18f, 10.88f};
+    static const char *const NM[10] = {"R", "9", "B3", "3", "4", "5", "6", "B7", "B7", "7"};
+    uint32_t k, b = 0;
+    for (k = 1; k < 10u; k++) if ((t - IV[k]) * (t - IV[k]) < (t - IV[b]) * (t - IV[b])) b = k;
+    return NM[b];
+}
+
+/* progressions: the scale degrees (1..7) of drones 2..6; 0 marks FIFTHS (each a fourth up, same chord) */
+#define NPROG 5u
+static const struct { const char *name; uint8_t deg[5]; } PROG[NPROG] = {
+    {"DREAM", {4, 6, 2, 5, 3}},                  /* I  IV vi ii V  iii */
+    {"POP",   {5, 6, 4, 1, 5}},                  /* I  V  vi IV I  V   */
+    {"DARK",  {6, 3, 7, 4, 1}},                  /* i  VI III VII iv i (in minor) */
+    {"STILL", {1, 1, 1, 1, 1}},                  /* one chord, six voicings */
+    {"FIFTHS", {0, 0, 0, 0, 0}},                 /* round the circle */
+};
+static volatile uint32_t prog;
+
+static const uint8_t PERM[24][4] = {
+    {0,1,2,3},{0,1,3,2},{0,2,1,3},{0,2,3,1},{0,3,1,2},{0,3,2,1},{1,0,2,3},{1,0,3,2},{1,2,0,3},{1,2,3,0},
+    {1,3,0,2},{1,3,2,0},{2,0,1,3},{2,0,3,1},{2,1,0,3},{2,1,3,0},{2,3,0,1},{2,3,1,0},{3,0,1,2},{3,0,2,1},
+    {3,1,0,2},{3,1,2,0},{3,2,0,1},{3,2,1,0}};
+
+/* the 4 oscillators (tunings t, from the drone's root) onto chord type c on root r (semitones from the
+ * drone's root): the target of each and the least total movement */
+static float fit(const float *t, uint32_t c, float r, float *tgt, uint8_t *tone)
+{
+    float dd[4][4], best = 1e9f;
+    uint32_t i, k, p, bp = 0;
+    for (i = 0; i < NO; i++)
+        for (k = 0; k < 4u; k++) {
+            float d = t[i] - (r + CH[c].t[k]);
+            d -= 12.0f * (float)roundi(d * (1.0f / 12.0f));     /* the nearest octave */
+            dd[i][k] = d;
+        }
+    for (p = 0; p < 24u; p++) {
+        float cost = 0.0f;
+        for (i = 0; i < NO; i++) { float d = dd[i][PERM[p][i]]; cost += d < 0.0f ? -d : d; }
+        if (cost < best) { best = cost; bp = p; }
+    }
+    if (tgt)
+        for (i = 0; i < NO; i++) { tgt[i] = t[i] - dd[i][PERM[bp][i]]; tone[i] = PERM[bp][i]; }
+    return best;
+}
+
+static void set_chord(uint32_t d, uint32_t c, int32_t root_pc)    /* drone d onto chord c at root_pc (0..11, absolute) */
+{
+    drone_t *v = &dr[d];
+    float t[NO], tgt[NO], r;
+    uint8_t tone[NO];
+    uint32_t o;
+    int32_t rr = (root_pc - roundi(v->root)) % 12;
+    if (rr < 0) rr += 12;
+    r = (float)rr;
+    if (r > 6.0f) r -= 12.0f;                                   /* the chord's root nearest the drone's */
+    for (o = 0; o < NO; o++) t[o] = v->o[o].tune;
+    fit(t, c, r, tgt, tone);
+    for (o = 0; o < NO; o++) { v->o[o].sweet_t = tgt[o]; v->o[o].tone = (uint8_t)tone[o]; }
+    v->ch_type = (uint8_t)c;
+    v->ch_root = (uint8_t)root_pc;
+}
 
 static void sweet_update(void)
 {
-    static const float BEAT[4] = {0.25f, 0.5f, 1.0f, 2.0f};
-    uint32_t d, o, k, b;
-    float step_hz = clampf(sq_bpm, 20.0f, 300.0f) * (1.0f / 60.0f);
-    for (d = 0; d < ND; d++)
-        for (o = 0; o < NO; o++) {
-            osc_t *s = &dr[d].o[o];
-            float t = s->tune, fr, base, best, bd, f;
-            int32_t oc = (int32_t)(t * (1.0f / 12.0f));
-            uint32_t ji = 0, beat = 0;
-            if ((float)oc * 12.0f > t) oc--;                    /* floor */
-            fr = t - 12.0f * (float)oc;
-            for (k = 1; k < 13u; k++)
-                if ((fr - JI[k]) * (fr - JI[k]) < (fr - JI[ji]) * (fr - JI[ji])) ji = k;
-            if (ji == 12u) { ji = 0; oc++; }                  /* the octave above: 1/1 again */
-            base = 12.0f * (float)oc + JI[ji];
-            best = base;
-            bd = t > base ? t - base : base - t;
-            f = 440.0f * exp2f_((dr[d].root + base - 69.0f) * (1.0f / 12.0f));
-            for (b = 0; b < 8u; b++) {                          /* beating in time, either side */
-                float r = BEAT[b >> 1] * step_hz / f, c, e;
-                if (r > 0.5f) continue;
-                c = base + 12.0f * log2f_((b & 1u) ? 1.0f - r : 1.0f + r);
-                e = t > c ? t - c : c - t;
-                if (c - base < 0.5f && base - c < 0.5f && e < bd) { bd = e; best = c; beat = 1; }
-            }
-            s->sweet_t = best;
-            s->ji = (uint8_t)ji;
-            s->beat = (uint8_t)beat;
+    static const uint8_t MAJ[7] = {0, 2, 4, 5, 7, 9, 11}, MIN[7] = {0, 2, 3, 5, 7, 8, 10};
+    static const uint8_t QMAJ[7] = {C_MAJ7, C_MIN7, C_MIN7, C_MAJ7, C_DOM7, C_MIN7, C_MIN7};
+    static const uint8_t QMIN[7] = {C_MIN7, C_MIN7, C_MAJ7, C_MIN7, C_MIN7, C_MAJ7, C_DOM7};
+    float t[NO], best = 1e9f;
+    uint32_t c, o, d, bc = 0, minor, pg = prog < NPROG ? prog : 0;
+    int32_t r, br = 0, key;
+    for (o = 0; o < NO; o++) t[o] = dr[0].o[o].tune;
+    for (c = 0; c < NCH; c++)                                   /* drone 1: its nearest chord */
+        for (r = -5; r <= 6; r++) {
+            float cost = fit(t, c, (float)r, 0, 0) + (r ? 0.3f : 0.0f);   /* a chord on its own root wins ties */
+            if (cost < best) { best = cost; bc = c; br = r; }
         }
+    key = (roundi(dr[0].root) + br) % 12;
+    if (key < 0) key += 12;
+    set_chord(0, bc, key);
+    minor = CH[bc].minor;
+    for (d = 1; d < ND; d++) {                                  /* drones 2..6: the progression */
+        uint32_t deg = PROG[pg].deg[d - 1u];
+        if (!deg) set_chord(d, bc, (key + 5 * (int32_t)d) % 12);      /* FIFTHS */
+        else set_chord(d, minor ? QMIN[deg - 1u] : QMAJ[deg - 1u], (key + (minor ? MIN[deg - 1u] : MAJ[deg - 1u])) % 12);
+    }
 }
 
 /* ------------------------------------------------------------------ the sound as saved (main loop) */
@@ -656,6 +723,7 @@ typedef struct {
     uint8_t sh_cut, sh_pitch, noise, dl_feed, dl_tone, dl_mix;   /* 0.1 oct, semitone, %, %, %, % */
     uint8_t v4_pad[2];              /* (a v4 sound was 232 bytes long) */
     uint8_t sweet[ND];              /* v6: % per drone (v5: one for all, 236 bytes) */
+    uint8_t prog;                   /* the progression (0 in older v6 sounds) */
 } saved_t;
 #define MAGIC 0x48454C36u           /* "HEL6" */
 #define MAGIC_V5 0x48454C35u        /* "HEL5": one SWEET for all the drones */
@@ -709,6 +777,7 @@ static void defaults(void)
     rv_decay = 12.0f; rv_size = 0.85f; rv_tone = 0.5f; rv_mix = 0.35f;
     voice_defaults();
     for (d = 0; d < ND; d++) dr[d].sweet = 0.0f;
+    prog = 0;
 }
 
 static uint8_t pc(float x) { return (uint8_t)roundi(clampf(x, 0.0f, 1.0f) * 100.0f); }
@@ -758,6 +827,7 @@ static void save_sound(void)
     s.sh_cut = (uint8_t)roundi(sh_cut * 10.0f); s.sh_pitch = (uint8_t)roundi(sh_pitch); s.noise = pc(noise_lv);
     s.dl_feed = pc(dl_feed); s.dl_tone = pc(dl_tone); s.dl_mix = pc(dl_mix);
     for (d = 0; d < ND; d++) s.sweet[d] = pc(dr[d].sweet);
+    s.prog = (uint8_t)prog;
     H->save(&s, sizeof s);
 }
 
@@ -819,6 +889,7 @@ static void load_sound(void)
     dl_feed = (float)s.dl_feed * 0.01f; dl_tone = (float)s.dl_tone * 0.01f; dl_mix = (float)s.dl_mix * 0.01f;
     for (d = 0; d < ND; d++)
         if (ver >= 5u) dr[d].sweet = (float)s.sweet[ver >= 6u ? d : 0] * 0.01f;
+    if (ver >= 6u) prog = s.prog < NPROG ? s.prog : 0;
 }
 
 /* ------------------------------------------------------------------ the panel (main loop) */
@@ -1022,6 +1093,14 @@ static void ui(uint32_t ev, int32_t arg)
         if (id >= HB_ENC_KNOB1 && id <= HB_ENC_KNOB4) { knob(id - HB_ENC_KNOB1, arg); sweet_update(); }
         else if (id == HB_ENC_PRESETS && page == HB_BTN_SEQ && lsub == 1u) knob(4, arg);   /* step 5 */
         else if (id == HB_ENC_SELECT) v->root = clampf(v->root + (float)arg, 12.0f, 96.0f);
+        else if (id == HB_ENC_ALGORITHM && SEL_HELD) {      /* SEL + ALGORITHM: the progression */
+            static char pm[16];
+            int32_t pr = (int32_t)prog + (arg > 0 ? 1 : -1);
+            prog = (uint32_t)(pr < 0 ? (int32_t)NPROG - 1 : pr >= (int32_t)NPROG ? 0 : pr);
+            sweet_update();
+            put_s(put_s(pm, "PROG "), PROG[prog].name);
+            say(pm);
+        }
         else if (id == HB_ENC_ALGORITHM) {                  /* SWEET */
             static char sm[16];
             sweet_update();
@@ -1290,17 +1369,21 @@ static void draw_home(void)                     /* the selected drone: its oscil
     uint16_t dc = drone_col(sel);
     if (*msg) p = put_s(b, msg);
     else if (SEL_HELD) { p = put_s(b, "CPU "); p = put_u(p, load_pct); put_s(p, "%"); }
+    else if (v->sweet > 0.0f) {                         /* its chord: "5 C#MAJ7" */
+        p = put_u(b, sel + 1u); p = put_s(p, " ");
+        p = put_s(p, NOTE_NAME[v->ch_root % 12u]); put_s(p, CH[v->ch_type].name);
+    }
     else { p = put_s(b, "D"); p = put_u(p, sel + 1u); p = put_s(p, " "); put_note(p, roundi(v->root)); }
     T(4, 24, 1, b, dc);
-    if (v->sweet > 0.0f) R(4, 53, roundi(v->sweet * 116.0f), 3, C_WHT);   /* how sweet: a line under the name */
+    if (v->sweet > 0.0f) R(4, 53, roundi(v->sweet * 128.0f), 3, C_WHT);   /* how sweet: a line under the name */
     if (!*msg)
         for (d = 0; d < ND; d++) {                          /* the six drones, each in its colour */
-            int32_t x = 128 + 18 * (int32_t)d, e = roundi(dr[d].env * 20.0f);
+            int32_t x = 136 + 17 * (int32_t)d, e = roundi(dr[d].env * 20.0f);
             uint16_t c = drone_col(d);
-            R(x, 27, 16, 28, d == sel ? C_WHT : C_BLK);
-            R(x + 2, 29, 12, 24, c);
-            R(x + 4, 31, 8, 20, C_BLK);
-            if (e > 0) R(x + 4, 51 - e, 8, e, dr[d].gate ? c : C_DIM);
+            R(x, 27, 15, 28, d == sel ? C_WHT : C_BLK);
+            R(x + 2, 29, 11, 24, c);
+            R(x + 4, 31, 7, 20, C_BLK);
+            if (e > 0) R(x + 4, 51 - e, 7, e, dr[d].gate ? c : C_DIM);
         }
     for (o = 0; o < NO; o++) {
         osc_t *s = &v->o[o];
@@ -1310,9 +1393,8 @@ static void draw_home(void)                     /* the selected drone: its oscil
         r.name = "OSC";
         r.unit = "ST";
         r.ucol = 0;
-        if (v->sweet > 0.0f) {                              /* the sweet spot's ratio; white when it is on it */
-            put_s(u[o], JI_NAME[s->ji]);
-            if (s->beat) put_s(u[o] + slen(u[o]), "~");
+        if (v->sweet > 0.0f) {                              /* its chord tone; white when it is on it */
+            put_s(u[o], tone_name(CH[v->ch_type].t[s->tone]));
             r.unit = u[o];
             r.ucol = off < 0.03f && off > -0.03f ? C_WHT : C_DIM;
         }
