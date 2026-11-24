@@ -16,24 +16,36 @@ A module for [fm1-dock](https://github.com/joakimeriksson/fm1-dock), inspired by
 - an echo on the voices (up to 1 s, tape-like, stereo)
 - a big hall reverb on everything: 8-line feedback delay network with diffusion and slow modulation,
   decay up to 60 s
-- **SWEET** (the ALGORITHM knob), one per drone: pulls the drone's 4 oscillators onto their nearest sweet
-  spots, from free tuning (0 %) to locked (100 %)
+- **SWEET** (the ALGORITHM knob), one per drone: morphs the drone's 4 oscillators into a pure-tuned chord;
+  drone 1 chooses it, drones 2–6 follow in a progression
 - each drone has its own colour, so one look tells you which drone you are editing
 - the sound is saved with SAVE and comes back at the next start (sounds saved by older HELIOs still load)
 
-## SWEET: the sweet-spot knob
+## SWEET: chords
 
-Every drone has its own SWEET: turn **ALGORITHM** and it sets the selected drone's. At 0 % its oscillators sound exactly where you tuned them. Turning it up pulls each
-one towards its nearest sweet spot; at 100 % it sits on it, and the tuning knobs jump from sweet spot
-to sweet spot. A sweet spot is either
+Every drone has its own SWEET: turn **ALGORITHM** and it sets the selected drone's. At 0 % the
+drone's 4 oscillators sound exactly as you tuned them; turning it up morphs them into a chord, and at
+100 % they play it. Every chord is tuned pure (just ratios from its root: 5/4, 3/2, 15/8 …), so it
+does not beat or wobble.
 
-- a just ratio to the drone's root, in any octave: 1/1, 16/15, 9/8, 6/5, 5/4, 4/3, 7/5, 3/2, 8/5, 5/3,
-  7/4, 15/8 (pure intervals, no beating), or
-- a hair off one of them, so that the two beat slowly **in time with the sequencer's tempo**: once
-  every 4 steps, every 2 steps, every step or twice a step (shown with a `~`, like `3/2~`).
+- **Drone 1 chooses the chord.** HELIO looks at how its 4 oscillators are tuned and finds the nearest
+  chord (major 7, 7, 6, add 9, sus 4, power, minor 7, minor 6), each oscillator moving to the chord
+  tone nearest to it, in its own octave.
+- **Drones 2–6 follow** with the next chords of a progression in drone 1's key (major or minor, from
+  drone 1's chord), each moving its oscillators to the nearest notes of its chord.
+- **SEL + ALGORITHM** chooses the progression (drones 1 → 6, from a C major 7 on drone 1):
 
-The start screen shows each oscillator's sweet spot next to its tuning, white once it sits on it, and
-a white line under the drone's name shows how sweet the knob is set.
+| Progression | Chords |
+|---|---|
+| DREAM | C maj7 · F maj7 · A m7 · D m7 · G7 · E m7 |
+| POP | C maj7 · G7 · A m7 · F maj7 · C maj7 · G7 |
+| DARK | i · VI · III · VII · iv · i (made for a minor drone 1) |
+| STILL | the same chord six times, in six voicings |
+| FIFTHS | round the circle: C · F · B♭ · E♭ · A♭ · D♭, all like drone 1's chord |
+
+On the start screen the title shows the drone's chord (`1 CMAJ7`) once its SWEET is up, each
+oscillator shows which chord tone it goes to (R, 3, 5, 7, 9 …, white when it is there), and a white
+line under the title shows how far SWEET is turned up.
 
 ## Drone colours
 
@@ -69,7 +81,8 @@ their levels as bars.
 | hold **SEL** + key F4 … G5 | root note of the selected drone (two octaves lower) |
 | **OCT− / OCT+** | selected drone one octave down / up |
 | **SELECT** knob | selected drone's root, one semitone per click |
-| **ALGORITHM** knob | selected drone's **SWEET**: 0 % free tuning → 100 % locked on sweet spots |
+| **ALGORITHM** knob | selected drone's **SWEET**: 0 % as tuned → 100 % its chord |
+| hold **SEL** + **ALGORITHM** | the chord progression (DREAM, POP, DARK, STILL, FIFTHS) |
 | **HOME**, a short press | out of any page, straight back to the selected drone |
 | **PRESETS** knob | selected drone's volume |
 | **KNOB 1–4** | tune oscillator 1–4, 5 cents per click (hold **SEL**: 1 semitone) |
