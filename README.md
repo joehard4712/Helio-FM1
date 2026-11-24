@@ -16,18 +16,42 @@ A module for [fm1-dock](https://github.com/joakimeriksson/fm1-dock), inspired by
 - an echo on the voices (up to 1 s, tape-like, stereo)
 - a big hall reverb on everything: 8-line feedback delay network with diffusion and slow modulation,
   decay up to 60 s
+- **SWEET** (the ALGORITHM knob): pulls every drone oscillator onto the nearest sweet spot, from free
+  tuning (0 %) to locked (100 %)
+- each drone has its own colour, so one look tells you which drone you are editing
 - the sound is saved with SAVE and comes back at the next start (sounds saved by older HELIOs still load)
+
+## SWEET: the sweet-spot knob
+
+Turn **ALGORITHM**. At 0 % the oscillators sound exactly where you tuned them. Turning it up pulls each
+one towards its nearest sweet spot; at 100 % it sits on it, and the tuning knobs jump from sweet spot
+to sweet spot. A sweet spot is either
+
+- a just ratio to the drone's root, in any octave: 1/1, 16/15, 9/8, 6/5, 5/4, 4/3, 7/5, 3/2, 8/5, 5/3,
+  7/4, 15/8 (pure intervals, no beating), or
+- a hair off one of them, so that the two beat slowly **in time with the sequencer's tempo**: once
+  every 4 steps, every 2 steps, every step or twice a step (shown with a `~`, like `3/2~`).
+
+The start screen shows each oscillator's sweet spot next to its tuning, white once it sits on it, and
+a white line under the drone's name shows how sweet the knob is set.
+
+## Drone colours
+
+1 red · 2 orange · 3 yellow · 4 green · 5 blue · 6 violet. The start screen is drawn in the selected
+drone's colour, the six boxes at the top right are the six drones in theirs (filled while they sound,
+the selected one framed in white), and on the selected drone's pages (EDIT, LFO 1/4 and 2/4, ENV) the
+bars are in its colour too, under the page's own coloured title.
 
 ## The screen
 
 Big letters, one colour per page on black. Each page is a title bar and four rows, one per knob: the
-knob's number, the name, the value and a long bar. The start screen (amber) shows the selected drone
+knob's number, the name, the value and a long bar. The start screen (in the selected drone's colour) shows the selected drone
 and its note, the six drones as boxes (filled while they sound) and the four oscillators' tuning, with
 their levels as bars.
 
 | Page | Colour |
 |---|---|
-| start screen (drone) | amber |
+| start screen (drone) | the drone's colour |
 | EDIT | white |
 | FX | cyan |
 | GLO | magenta |
@@ -45,7 +69,7 @@ their levels as bars.
 | hold **SEL** + key F4 … G5 | root note of the selected drone (two octaves lower) |
 | **OCT− / OCT+** | selected drone one octave down / up |
 | **SELECT** knob | selected drone's root, one semitone per click |
-| **ALGORITHM** knob | selected drone's waveform, sine → saw |
+| **ALGORITHM** knob | **SWEET**: 0 % free tuning → 100 % locked on sweet spots |
 | **PRESETS** knob | selected drone's volume |
 | **KNOB 1–4** | tune oscillator 1–4, 5 cents per click (hold **SEL**: 1 semitone) |
 | **PLAY** | sequencer start / stop |
