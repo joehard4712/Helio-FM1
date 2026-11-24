@@ -54,6 +54,12 @@ jobs:
           cc -O2 -Wall -Idock/firmware/dock -Ihelio -o host_sim test/host_sim.c -lm
           ./host_sim
 
+      - name: Pictures of every page (screens/*.png)
+        run: |
+          cc -O2 -Idock/firmware/dock -Idock/firmware/gen -Ihelio -o screens_bin test/screens.c -lm
+          mkdir -p screens && ./screens_bin
+          python3 -c "import glob; from PIL import Image; [Image.open(f).resize((480, 480), Image.NEAREST).save(f[:-4] + '.png') for f in glob.glob('screens/*.ppm')]"
+
       - name: Emulator save (fm1-dock 0.8 with HELIO installed in its flash)
         run: |
           curl -fL --retry 3 -o fm1-dock.fwsc https://github.com/joakimeriksson/fm1-dock/releases/download/v0.8/fm1-dock-0.8.fwsc
@@ -87,4 +93,5 @@ jobs:
             helio.dock
             helio_test.wav
             helio-emulator.fm1save
+            screens/*.png
           if-no-files-found: error
