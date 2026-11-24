@@ -242,18 +242,31 @@ int main(void)
         store_n = (uint32_t)SAVED_V3; { uint32_t m = MAGIC_V3; memcpy(store, &m, 4); }
         dr[0].root = 0.0f; v_cut = 1.0f; load_sound();
         printf("v3 sound loads: root %.0f, voice cut stays %.0f\n", dr[0].root, v_cut);
-        /* SWEET: osc 3 at +6.90 st goes to 3/2 (+7.02); osc 2 a hair off unison may beat in tempo */
-        dr[0].o[2].tune = 6.90f; dr[0].o[1].tune = 0.12f; dr[0].root = 36.0f; sq_bpm = 120.0f;
-        enc(HB_ENC_ALGORITHM, 50);
-        printf("sweet %.0f %% (drone 2: %.0f %%): osc3 %.2f -> %.3f (%s%s), osc2 %.2f -> %.3f (%s%s)\n", dr[0].sweet * 100.0f, dr[1].sweet * 100.0f,
-               dr[0].o[2].tune, dr[0].o[2].sweet_t, JI_NAME[dr[0].o[2].ji], dr[0].o[2].beat ? " beating" : "",
-               dr[0].o[1].tune, dr[0].o[1].sweet_t, JI_NAME[dr[0].o[1].ji], dr[0].o[1].beat ? " beating" : "");
-        {   /* the beat: osc 2 against 1/1 at C2 (65.4 Hz) */
-            float f0 = 440.0f * powf(2.0f, (36.0f - 69.0f) / 12.0f), f1 = f0 * powf(2.0f, dr[0].o[1].sweet_t / 12.0f);
-            printf("  beat %.3f Hz = %.2f steps at 120 BPM\n", f1 - f0, (f1 - f0) / 2.0f);
+        /* SWEET: drone 1's chord, the progression on drones 2..6 */
+        {
+            uint32_t d, o, pg;
+            for (pg = 0; pg < NPROG; pg++) {
+                prog = pg; sweet_update();
+                printf("prog %-6s:", PROG[pg].name);
+                for (d = 0; d < ND; d++) printf(" %s%s", NOTE_NAME[dr[d].ch_root], CH[dr[d].ch_type].name);
+                printf("\n");
+            }
+            prog = 0; sweet_update();
+            for (d = 0; d < 2u; d++) {
+                printf("drone %u (root %.0f):", d + 1u, dr[d].root);
+                for (o = 0; o < NO; o++) printf("  %+.2f -> %+.2f (%s)", dr[d].o[o].tune, dr[d].o[o].sweet_t,
+                                               tone_name(CH[dr[d].ch_type].t[dr[d].o[o].tone]));
+                printf("\n");
+            }
+            dr[0].o[1].tune = 3.0f; dr[0].o[3].tune = 10.0f; sweet_update();   /* a minor-ish tuning */
+            printf("drone 1 tuned 0 3 7 10 -> %s%s; drone 2 -> %s%s\n", NOTE_NAME[dr[0].ch_root], CH[dr[0].ch_type].name,
+                   NOTE_NAME[dr[1].ch_root], CH[dr[1].ch_type].name);
+            enc(HB_ENC_ALGORITHM, 50);
+            btn(HB_BTN_SEL, 1); enc(HB_ENC_ALGORITHM, 1); btn(HB_BTN_SEL, 0);
+            printf("SEL + ALGORITHM -> prog %s; drone 1 sweet %.0f %%\n", PROG[prog].name, dr[0].sweet * 100.0f);
         }
-        dr[3].sweet = 0.4f; save_sound(); dr[0].sweet = dr[3].sweet = 0.0f; load_sound();
-        printf("save/load v6: sweet drone 1 %.0f %%, drone 4 %.0f %%, drone 2 %.0f %% (%u bytes)\n", dr[0].sweet * 100.0f, dr[3].sweet * 100.0f, dr[1].sweet * 100.0f, store_n);
+        dr[3].sweet = 0.4f; save_sound(); dr[0].sweet = dr[3].sweet = 0.0f; prog = 0; load_sound();
+        printf("save/load v6: sweet drone 1 %.0f %%, drone 4 %.0f %%, drone 2 %.0f %%, prog %u (%u bytes)\n", dr[0].sweet * 100.0f, dr[3].sweet * 100.0f, dr[1].sweet * 100.0f, prog, store_n);
         store_n = SAVED_V5; { uint32_t m = MAGIC_V5; memcpy(store, &m, 4); store[232] = 55; }
         load_sound();
         printf("v5 sound loads: every drone's sweet %.0f %% %.0f %%\n", dr[0].sweet * 100.0f, dr[5].sweet * 100.0f);
