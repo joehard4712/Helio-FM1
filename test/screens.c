@@ -91,6 +91,9 @@ int main(void)
     hb_module.ui(HB_EV_KEY_DOWN | 0, 0); hb_module.ui(HB_EV_KEY_DOWN | 6, 0);
     for (i = 0; i < 400; i++) hb_module.render(out, 256);
     shot("0_home");
+    hb_module.ui(HB_EV_ENC | HB_ENC_ALGORITHM, 35);   /* SWEET 70 % */
+    for (i = 0; i < 40; i++) hb_module.render(out, 256);
+    shot("0b_home_sweet");
     tap(HB_BTN_EDIT); shot("1_levels"); tap(HB_BTN_EDIT);
     tap(HB_BTN_FX); shot("2_reverb"); tap(HB_BTN_FX); shot("3_echo"); tap(HB_BTN_FX);
     tap(HB_BTN_GLO); shot("4_filters"); tap(HB_BTN_GLO);
